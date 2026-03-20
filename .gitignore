@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+node_modules/
+vendor/
+__pycache__/
+*.log
+backend/telegram_state.json
+backend/scanner/*.json
