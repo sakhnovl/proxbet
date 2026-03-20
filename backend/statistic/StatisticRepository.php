@@ -9,11 +9,11 @@ use PDO;
 final class StatisticRepository
 {
     /**
-     * Columns in `matches` that store HT metrics (last5 + h2h5).
+     * Columns in `matches` that store calculated statistics.
      *
      * Keep in sync with `backend/stat.php`.
      */
-    private const HT_METRIC_COLUMNS = [
+    private const METRIC_COLUMNS = [
         // last5 (Q)
         'ht_match_goals_1',
         'ht_match_missed_goals_1',
@@ -32,6 +32,14 @@ final class StatisticRepository
         'h2h_ht_match_missed_goals_2',
         'h2h_ht_match_goals_2_avg',
         'h2h_ht_match_missed_2_avg',
+        // tournament table stats
+        'table_games_1',
+        'table_goals_1',
+        'table_missed_1',
+        'table_games_2',
+        'table_goals_2',
+        'table_missed_2',
+        'table_avg',
     ];
 
     private const STATUS_COLUMNS = [
@@ -74,7 +82,7 @@ final class StatisticRepository
                 '`stats_version` <> :stats_version',
                 '(`stats_updated_at` IS NOT NULL AND `stats_updated_at` < DATE_SUB(UTC_TIMESTAMP(), INTERVAL :stale_after SECOND))',
             ];
-            foreach (self::HT_METRIC_COLUMNS as $col) {
+            foreach (self::METRIC_COLUMNS as $col) {
                 $parts[] = '`' . $col . '` IS NULL';
             }
 
@@ -131,13 +139,13 @@ final class StatisticRepository
     /**
      * @param array<string,int|float|null> $metrics
      */
-    public function saveHtMetrics(int $matchId, array $metrics): void
+    public function saveMetrics(int $matchId, array $metrics): void
     {
         if ($metrics === []) {
             return;
         }
 
-        $allowedSet = array_flip(self::HT_METRIC_COLUMNS);
+        $allowedSet = array_flip(self::METRIC_COLUMNS);
 
         $pairs = [];
         $params = [':id' => $matchId];

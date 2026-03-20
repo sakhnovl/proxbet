@@ -13,7 +13,8 @@ final class StatisticService
         private Config $config,
         private EventsstatClient $client,
         private StatisticRepository $repo,
-        private HtMetricsCalculator $calculator,
+        private HtMetricsCalculator $htCalculator,
+        private TableMetricsCalculator $tableCalculator,
         private PDO $db,
     ) {
     }
@@ -114,13 +115,16 @@ final class StatisticService
                     $this->repo->saveSgiJson($matchId, $raw);
                 }
 
-                $details = ($decoded === [] || $home === '' || $away === '')
-                    ? ['metrics' => $this->getEmptyMetrics(), 'debug' => []]
-                    : $this->calculator->calculateAll($decoded, $home, $away);
+                $htDetails = ($decoded === [] || $home === '' || $away === '')
+                    ? ['metrics' => $this->getEmptyHtMetrics(), 'debug' => []]
+                    : $this->htCalculator->calculateAll($decoded, $home, $away);
+                $tableDetails = ($decoded === [] || $home === '' || $away === '')
+                    ? ['metrics' => $this->getEmptyTableMetrics(), 'debug' => []]
+                    : $this->tableCalculator->calculate($decoded, $home, $away);
 
-                $this->logDebugWarnings($matchId, $sgi, $details['debug']);
+                $this->logDebugWarnings($matchId, $sgi, $htDetails['debug'], $tableDetails['debug']);
 
-                $this->repo->saveHtMetrics($matchId, $details['metrics']);
+                $this->repo->saveMetrics($matchId, array_merge($htDetails['metrics'], $tableDetails['metrics']));
                 $this->repo->saveStatMeta($matchId, [
                     'stats_updated_at' => gmdate('Y-m-d H:i:s'),
                     'stats_fetch_status' => 'ok',
@@ -133,7 +137,8 @@ final class StatisticService
                         'source' => $source,
                         'home' => $home,
                         'away' => $away,
-                        'debug' => $details['debug'],
+                        'ht_debug' => $htDetails['debug'],
+                        'table_debug' => $tableDetails['debug'],
                     ]),
                     'stats_refresh_needed' => 0,
                 ]);
@@ -145,8 +150,9 @@ final class StatisticService
                     'home' => $home,
                     'away' => $away,
                     'sgi_json_source' => $source,
-                    'metrics' => $details['metrics'],
-                    'ht_debug' => $details['debug'],
+                    'metrics' => array_merge($htDetails['metrics'], $tableDetails['metrics']),
+                    'ht_debug' => $htDetails['debug'],
+                    'table_debug' => $tableDetails['debug'],
                 ]);
             } catch (\Throwable $e) {
                 $this->repo->saveStatMeta($matchId, [
@@ -199,13 +205,29 @@ final class StatisticService
      *
      * @return array<string,null>
      */
-    private function getEmptyMetrics(): array
+    private function getEmptyHtMetrics(): array
     {
         return array_fill_keys([
             'ht_match_goals_1', 'ht_match_missed_goals_1', 'ht_match_goals_1_avg', 'ht_match_missed_1_avg',
             'ht_match_goals_2', 'ht_match_missed_goals_2', 'ht_match_goals_2_avg', 'ht_match_missed_2_avg',
             'h2h_ht_match_goals_1', 'h2h_ht_match_missed_goals_1', 'h2h_ht_match_goals_1_avg', 'h2h_ht_match_missed_1_avg',
             'h2h_ht_match_goals_2', 'h2h_ht_match_missed_goals_2', 'h2h_ht_match_goals_2_avg', 'h2h_ht_match_missed_2_avg',
+        ], null);
+    }
+
+    /**
+     * @return array<string,null>
+     */
+    private function getEmptyTableMetrics(): array
+    {
+        return array_fill_keys([
+            'table_games_1',
+            'table_goals_1',
+            'table_missed_1',
+            'table_games_2',
+            'table_goals_2',
+            'table_missed_2',
+            'table_avg',
         ], null);
     }
 
@@ -231,6 +253,13 @@ final class StatisticService
             'h2h_ht_match_missed_goals_2' => 'INT NULL',
             'h2h_ht_match_goals_2_avg' => 'DOUBLE NULL',
             'h2h_ht_match_missed_2_avg' => 'DOUBLE NULL',
+            'table_games_1' => 'INT NULL',
+            'table_goals_1' => 'INT NULL',
+            'table_missed_1' => 'INT NULL',
+            'table_games_2' => 'INT NULL',
+            'table_goals_2' => 'INT NULL',
+            'table_missed_2' => 'INT NULL',
+            'table_avg' => 'DECIMAL(10,2) NULL',
             'stats_updated_at' => 'DATETIME NULL',
             'stats_fetch_status' => 'VARCHAR(32) NULL',
             'stats_error' => 'TEXT NULL',
@@ -272,6 +301,8 @@ final class StatisticService
                 $this->db->exec('ALTER TABLE `matches` ' . implode(', ', $adds));
                 Logger::info('Added missing statistic columns', ['table' => 'matches', 'columns' => array_keys($missing)]);
             }
+
+            $this->db->exec('ALTER TABLE `matches` MODIFY COLUMN `table_avg` DECIMAL(10,2) NULL');
         } catch (\Throwable $e) {
             Logger::error('Failed to ensure statistic columns', ['table' => 'matches', 'error' => $e->getMessage()]);
         }
@@ -296,12 +327,13 @@ final class StatisticService
     }
 
     /**
-     * @param array<string,mixed> $debug
+     * @param array<string,mixed> $htDebug
+     * @param array<string,mixed> $tableDebug
      */
-    private function logDebugWarnings(int $matchId, string $sgi, array $debug): void
+    private function logDebugWarnings(int $matchId, string $sgi, array $htDebug, array $tableDebug): void
     {
         foreach (['home_last5', 'away_last5', 'home_h2h5', 'away_h2h5'] as $bucket) {
-            $item = $debug[$bucket] ?? null;
+            $item = $htDebug[$bucket] ?? null;
             if (!is_array($item)) {
                 continue;
             }
@@ -318,5 +350,18 @@ final class StatisticService
                 ]);
             }
         }
+
+        $warnings = $tableDebug['warnings'] ?? null;
+        if (!is_array($warnings) || $warnings === []) {
+            return;
+        }
+
+        Logger::info('Table metrics warnings', [
+            'match_id' => $matchId,
+            'sgi' => $sgi,
+            'warnings' => array_values($warnings),
+            'home_found' => (bool) ($tableDebug['home_found'] ?? false),
+            'away_found' => (bool) ($tableDebug['away_found'] ?? false),
+        ]);
     }
 }

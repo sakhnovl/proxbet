@@ -34,6 +34,7 @@ require_once $rootDir . '/backend/statistic/EventsstatClient.php';
 require_once $rootDir . '/backend/statistic/StatisticRepository.php';
 require_once $rootDir . '/backend/statistic/TeamNameNormalizer.php';
 require_once $rootDir . '/backend/statistic/HtMetricsCalculator.php';
+require_once $rootDir . '/backend/statistic/TableMetricsCalculator.php';
 require_once $rootDir . '/backend/statistic/StatisticService.php';
 require_once $rootDir . '/backend/statistic/StatisticServiceFactory.php';
 

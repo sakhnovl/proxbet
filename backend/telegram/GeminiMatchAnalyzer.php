@@ -99,6 +99,10 @@ final class GeminiMatchAnalyzer
     private function buildPrompt(array $context): string
     {
         $algorithmId = max(1, (int) ($context['algorithm_id'] ?? 1));
+        if ($algorithmId === 3) {
+            return $this->buildAlgorithmThreePrompt($context);
+        }
+
         if ($algorithmId === 2) {
             return $this->buildAlgorithmTwoPrompt($context);
         }
@@ -337,6 +341,102 @@ final class GeminiMatchAnalyzer
     }
 
     /**
+     * @param array<string,mixed> $context
+     */
+    private function buildAlgorithmThreePrompt(array $context): string
+    {
+        $messageText = trim((string) ($context['message_text'] ?? ''));
+        $algorithmData = is_array($context['scanner_algorithm_data'] ?? null) ? $context['scanner_algorithm_data'] : [];
+
+        $selectedTeamName = $this->value($algorithmData['selected_team_name'] ?? null);
+        $selectedTeamBet = $this->value($algorithmData['selected_team_target_bet'] ?? null);
+        $triggeredRule = $this->value($algorithmData['triggered_rule_label'] ?? ($algorithmData['triggered_rule'] ?? null));
+
+        $lines = [
+            'Ты футбольный аналитик по live-ставкам.',
+            'Нужен короткий, практичный и честный разбор именно по ставке алгоритма 3.',
+            '',
+            'ВАЖНО:',
+            '- Анализируй не матч в целом, а конкретную ставку на индивидуальный тотал команды больше 0.5.',
+            '- Оцени, стоит ли поддержать ставку алгоритма 3 на выбранную команду.',
+            '- Не выдумывай факты и не обещай гарантированный исход.',
+            '- Работай только по переданным данным.',
+            '',
+            'СУТЬ АЛГОРИТМА 3:',
+            '- Сигнал строится по табличной статистике команд.',
+            '- Выбирается команда, у которой по таблице голов относительно игр больше, чем у соперника.',
+            '- Ставка: индивидуальный тотал выбранной команды больше 0.5.',
+            '- Сигнал публикуется только в перерыве и только если выбранная команда еще не забила.',
+            '',
+            'ТВОЯ ЗАДАЧА:',
+            '- Дать мнение именно по ставке ' . $selectedTeamBet . '.',
+            '- Связать табличный сигнал с текущим состоянием матча в перерыве.',
+            '- Отдельно отметить сильные стороны и риски этой ставки.',
+            '',
+            'ФОРМАТ ОТВЕТА (строго соблюдай):',
+            '',
+            'Вердикт: [Поддерживаю / Сомневаюсь / Не поддерживаю]',
+            'Уверенность: [0-100]%',
+            '',
+            'Причины:',
+            '- причина 1',
+            '- причина 2',
+            '- причина 3',
+            '',
+            'Риск:',
+            '- 1 короткий пункт',
+            '',
+            'ФОКУС СТАВКИ:',
+            'Алгоритм: ' . $this->value($context['algorithm_name'] ?? 'Алгоритм 3'),
+            'Тип сигнала: ' . $this->value($context['scanner_signal_type'] ?? 'team_total'),
+            'Выбранная команда: ' . $selectedTeamName,
+            'Сторона: ' . $this->value($algorithmData['selected_team_side'] ?? null),
+            'Ставка: ' . $selectedTeamBet,
+            'Сработавшее правило: ' . $triggeredRule,
+            '',
+            'ДАННЫЕ ПО МАТЧУ:',
+            'Матч: ' . $this->value($context['home'] ?? null) . ' vs ' . $this->value($context['away'] ?? null),
+            'Лига: ' . $this->value($context['liga'] ?? null),
+            'Страна: ' . $this->value($context['country'] ?? null),
+            'Время: ' . $this->value($context['time'] ?? null),
+            'Статус: ' . $this->value($context['match_status'] ?? null),
+            'Счет live: ' . $this->score($context['live_hscore'] ?? null, $context['live_ascore'] ?? null),
+            '',
+            'ТАБЛИЧНЫЕ МЕТРИКИ:',
+            'Команда 1: игры ' . $this->value($algorithmData['table_games_1'] ?? null)
+                . ', забито ' . $this->value($algorithmData['table_goals_1'] ?? null)
+                . ', пропущено ' . $this->value($algorithmData['table_missed_1'] ?? null),
+            'Команда 2: игры ' . $this->value($algorithmData['table_games_2'] ?? null)
+                . ', забито ' . $this->value($algorithmData['table_goals_2'] ?? null)
+                . ', пропущено ' . $this->value($algorithmData['table_missed_2'] ?? null),
+            'Коэффициент атаки хозяев: ' . $this->value($algorithmData['home_attack_ratio'] ?? null),
+            'Коэффициент обороны хозяев: ' . $this->value($algorithmData['home_defense_ratio'] ?? null),
+            'Коэффициент атаки гостей: ' . $this->value($algorithmData['away_attack_ratio'] ?? null),
+            'Коэффициент обороны гостей: ' . $this->value($algorithmData['away_defense_ratio'] ?? null),
+            '',
+            'LIVE:',
+            'xG: ' . $this->value($context['live_xg_home'] ?? null) . ' / ' . $this->value($context['live_xg_away'] ?? null),
+            'Атаки: ' . $this->value($context['live_att_home'] ?? null) . ' / ' . $this->value($context['live_att_away'] ?? null),
+            'Опасные атаки: ' . $this->value($context['live_danger_att_home'] ?? null) . ' / ' . $this->value($context['live_danger_att_away'] ?? null),
+            'Удары в створ: ' . $this->value($context['live_shots_on_target_home'] ?? null) . ' / ' . $this->value($context['live_shots_on_target_away'] ?? null),
+            'Угловые: ' . $this->value($context['live_corner_home'] ?? null) . ' / ' . $this->value($context['live_corner_away'] ?? null),
+            '',
+            'ДАННЫЕ СКАНЕРА:',
+            'Сканер рекомендует ставку: ' . $this->value($context['scanner_bet'] ?? null),
+            'Причина сканера: ' . $this->value($context['scanner_reason'] ?? null),
+            'Основа алгоритма: ' . $this->value($context['scanner_algorithm_basis'] ?? null),
+        ];
+
+        if ($messageText !== '') {
+            $lines[] = '';
+            $lines[] = 'Изначальный сигнал бота:';
+            $lines[] = $messageText;
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
      * @param array<string,mixed> $decoded
      */
     private function extractText(array $decoded): ?string
@@ -395,6 +495,30 @@ final class GeminiMatchAnalyzer
     private function alignResponseWithScanner(string $response, array $context): string
     {
         $algorithmId = max(1, (int) ($context['algorithm_id'] ?? 1));
+        if ($algorithmId === 3) {
+            $scannerReason = trim((string) ($context['scanner_reason'] ?? ''));
+            $algorithmData = is_array($context['scanner_algorithm_data'] ?? null) ? $context['scanner_algorithm_data'] : [];
+            $selectedTeam = trim((string) ($algorithmData['selected_team_name'] ?? ''));
+            $targetBet = trim((string) ($algorithmData['selected_team_target_bet'] ?? ''));
+
+            $syncNote = 'Синхронизация со сканером: ставка алгоритма 3';
+            if ($targetBet !== '') {
+                $syncNote .= ' ' . $targetBet;
+            }
+            if ($selectedTeam !== '') {
+                $syncNote .= ' на команду ' . $selectedTeam;
+            }
+            if ($scannerReason !== '') {
+                $syncNote .= ', причина: ' . $scannerReason;
+            }
+
+            if (!str_contains($response, 'Синхронизация со сканером:')) {
+                $response .= "\n\n" . $syncNote;
+            }
+
+            return trim($response);
+        }
+
         if ($algorithmId === 2) {
             $scannerReason = trim((string) ($context['scanner_reason'] ?? ''));
             if ($scannerReason !== '' && !str_contains($response, 'Синхронизация со сканером:')) {

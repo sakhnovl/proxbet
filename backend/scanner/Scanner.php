@@ -7,12 +7,13 @@ namespace Proxbet\Scanner;
 use Proxbet\Line\Logger;
 
 /**
- * Main scanner orchestrator for first half goal probability analysis.
+ * Main scanner orchestrator for match analysis.
  */
 final class Scanner
 {
     private const ALGORITHM_ONE_ID = 1;
     private const ALGORITHM_TWO_ID = 2;
+    private const ALGORITHM_THREE_ID = 3;
 
     public function __construct(
         private DataExtractor $extractor,
@@ -22,8 +23,6 @@ final class Scanner
     }
 
     /**
-     * Scan all active matches and return analysis results.
-     *
      * @return array{total:int,analyzed:int,signals:int,results:array<int,array<string,mixed>>}
      */
     public function scan(): array
@@ -75,8 +74,6 @@ final class Scanner
     }
 
     /**
-     * Scan a single match and return analysis results for all algorithms.
-     *
      * @param array<string,mixed> $match
      * @return array<int,array<string,mixed>>
      */
@@ -85,7 +82,11 @@ final class Scanner
         $base = $this->extractBaseMatchData($match);
         $liveData = $this->extractor->extractLiveData($match);
 
-        if ($liveData['minute'] === 0 || $liveData['minute'] > 45) {
+        if ($liveData['minute'] === 0) {
+            return [];
+        }
+
+        if ($liveData['minute'] > 45 && trim($liveData['match_status']) !== 'Перерыв') {
             return [];
         }
 
@@ -93,6 +94,7 @@ final class Scanner
         $h2hData = $this->extractor->extractH2hData($match);
         $scores = $this->calculator->calculateAll($formData, $h2hData, $liveData);
         $algorithmTwoData = $this->extractor->extractAlgorithmTwoData($match);
+        $algorithmThreeData = $this->extractor->extractAlgorithmThreeData($match);
 
         $algorithmOneDecision = $this->filter->shouldBetAlgorithmOne(
             $liveData,
@@ -101,6 +103,7 @@ final class Scanner
             $h2hData
         );
         $algorithmTwoDecision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
+        $algorithmThreeDecision = $this->filter->shouldBetAlgorithmThree($algorithmThreeData);
 
         if (!$formData['has_data'] || !$h2hData['has_data']) {
             Logger::info('Scanner algorithm 1 skipped because statistics are incomplete', [
@@ -122,9 +125,19 @@ final class Scanner
             ]);
         }
 
+        if (!$algorithmThreeData['has_data']) {
+            Logger::info('Scanner algorithm 3 skipped because table data are incomplete', [
+                'match_id' => $base['match_id'],
+                'home' => $base['home'],
+                'away' => $base['away'],
+                'reason' => $algorithmThreeDecision['reason'],
+            ]);
+        }
+
         return [
             $this->buildAlgorithmOneResult($base, $liveData, $scores, $formData, $h2hData, $algorithmOneDecision),
             $this->buildAlgorithmTwoResult($base, $liveData, $formData, $h2hData, $algorithmTwoData, $algorithmTwoDecision),
+            $this->buildAlgorithmThreeResult($base, $liveData, $formData, $h2hData, $algorithmThreeData, $algorithmThreeDecision),
         ];
     }
 
@@ -145,8 +158,8 @@ final class Scanner
 
     /**
      * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array{minute:int,shots_total:int,shots_on_target:int,dangerous_attacks:int,corners:int,ht_hscore:int,ht_ascore:int,time_str:string} $liveData
-     * @param array{form_score:float,h2h_score:float,live_score:float,probability:float} $scores
+     * @param array<string,mixed> $liveData
+     * @param array<string,mixed> $scores
      * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
      * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
      * @param array{bet:bool,reason:string} $decision
@@ -165,8 +178,11 @@ final class Scanner
             $liveData,
             self::ALGORITHM_ONE_ID,
             'Алгоритм 1',
+            'first_half_goal',
             $decision,
             [
+                'score_home' => $liveData['ht_hscore'],
+                'score_away' => $liveData['ht_ascore'],
                 'probability' => $scores['probability'],
                 'form_score' => $scores['form_score'],
                 'h2h_score' => $scores['h2h_score'],
@@ -186,18 +202,10 @@ final class Scanner
 
     /**
      * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array{minute:int,shots_total:int,shots_on_target:int,dangerous_attacks:int,corners:int,ht_hscore:int,ht_ascore:int,time_str:string} $liveData
+     * @param array<string,mixed> $liveData
      * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
      * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
-     * @param array{
-     *   home_win_odd:float,
-     *   over_25_odd:float|null,
-     *   total_line:float|null,
-     *   over_25_odd_check_skipped:bool,
-     *   home_first_half_goals_in_last_5:int,
-     *   h2h_first_half_goals_in_last_5:int,
-     *   has_data:bool
-     * } $algorithmTwoData
+     * @param array<string,mixed> $algorithmTwoData
      * @param array{bet:bool,reason:string} $decision
      * @return array<string,mixed>
      */
@@ -214,8 +222,11 @@ final class Scanner
             $liveData,
             self::ALGORITHM_TWO_ID,
             'Алгоритм 2',
+            'first_half_goal',
             $decision,
             [
+                'score_home' => $liveData['ht_hscore'],
+                'score_away' => $liveData['ht_ascore'],
                 'probability' => null,
                 'form_score' => null,
                 'h2h_score' => null,
@@ -235,17 +246,85 @@ final class Scanner
 
     /**
      * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array{minute:int,shots_total:int,shots_on_target:int,dangerous_attacks:int,corners:int,ht_hscore:int,ht_ascore:int,time_str:string} $liveData
-     * @param array{bet:bool,reason:string} $decision
-     * @param array{
-     *   probability:float|null,
-     *   form_score:float|null,
-     *   h2h_score:float|null,
-     *   live_score:float|null,
-     *   form_data:array{home_goals:int,away_goals:int},
-     *   h2h_data:array{home_goals:int,away_goals:int},
-     *   algorithm_data:array<string,mixed>|null
-     * } $payload
+     * @param array<string,mixed> $liveData
+     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
+     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
+     * @param array<string,mixed> $algorithmThreeData
+     * @param array<string,mixed> $decision
+     * @return array<string,mixed>
+     */
+    private function buildAlgorithmThreeResult(
+        array $base,
+        array $liveData,
+        array $formData,
+        array $h2hData,
+        array $algorithmThreeData,
+        array $decision
+    ): array {
+        $algorithmThreePayload = [
+            'selected_team_side' => $decision['selected_team_side'] ?? null,
+            'selected_team_name' => $decision['selected_team_name'] ?? null,
+            'selected_team_goals_current' => $decision['selected_team_goals_current'] ?? null,
+            'selected_team_target_bet' => $decision['selected_team_target_bet'] ?? null,
+            'triggered_rule' => $decision['triggered_rule'] ?? null,
+            'triggered_rule_label' => $decision['triggered_rule_label'] ?? null,
+            'home_attack_ratio' => $decision['home_attack_ratio'] ?? $this->calculateRatio(
+                (int) ($algorithmThreeData['table_goals_1'] ?? 0),
+                (int) ($algorithmThreeData['table_games_1'] ?? 0)
+            ),
+            'away_defense_ratio' => $decision['away_defense_ratio'] ?? $this->calculateRatio(
+                (int) ($algorithmThreeData['table_missed_2'] ?? 0),
+                (int) ($algorithmThreeData['table_games_2'] ?? 0)
+            ),
+            'away_attack_ratio' => $decision['away_attack_ratio'] ?? $this->calculateRatio(
+                (int) ($algorithmThreeData['table_goals_2'] ?? 0),
+                (int) ($algorithmThreeData['table_games_2'] ?? 0)
+            ),
+            'home_defense_ratio' => $decision['home_defense_ratio'] ?? $this->calculateRatio(
+                (int) ($algorithmThreeData['table_missed_1'] ?? 0),
+                (int) ($algorithmThreeData['table_games_1'] ?? 0)
+            ),
+            'table_games_1' => $algorithmThreeData['table_games_1'],
+            'table_goals_1' => $algorithmThreeData['table_goals_1'],
+            'table_missed_1' => $algorithmThreeData['table_missed_1'],
+            'table_games_2' => $algorithmThreeData['table_games_2'],
+            'table_goals_2' => $algorithmThreeData['table_goals_2'],
+            'table_missed_2' => $algorithmThreeData['table_missed_2'],
+            'match_status' => $algorithmThreeData['match_status'],
+        ];
+
+        return $this->buildCommonResult(
+            $base,
+            $liveData,
+            self::ALGORITHM_THREE_ID,
+            'Алгоритм 3',
+            'team_total',
+            $decision,
+            [
+                'score_home' => $liveData['live_hscore'],
+                'score_away' => $liveData['live_ascore'],
+                'probability' => null,
+                'form_score' => null,
+                'h2h_score' => null,
+                'live_score' => null,
+                'form_data' => [
+                    'home_goals' => $formData['home_goals'],
+                    'away_goals' => $formData['away_goals'],
+                ],
+                'h2h_data' => [
+                    'home_goals' => $h2hData['home_goals'],
+                    'away_goals' => $h2hData['away_goals'],
+                ],
+                'algorithm_data' => $algorithmThreePayload,
+            ]
+        );
+    }
+
+    /**
+     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
+     * @param array<string,mixed> $liveData
+     * @param array{probability:float|null,form_score:float|null,h2h_score:float|null,live_score:float|null,score_home:int,score_away:int,form_data:array<string,mixed>,h2h_data:array<string,mixed>,algorithm_data:array<string,mixed>|null} $payload
+     * @param array<string,mixed> $decision
      * @return array<string,mixed>
      */
     private function buildCommonResult(
@@ -253,6 +332,7 @@ final class Scanner
         array $liveData,
         int $algorithmId,
         string $algorithmName,
+        string $signalType,
         array $decision,
         array $payload
     ): array {
@@ -264,11 +344,12 @@ final class Scanner
             'away' => $base['away'],
             'minute' => $liveData['minute'],
             'time' => $liveData['time_str'],
-            'score_home' => $liveData['ht_hscore'],
-            'score_away' => $liveData['ht_ascore'],
+            'match_status' => $liveData['match_status'],
+            'score_home' => $payload['score_home'],
+            'score_away' => $payload['score_away'],
             'algorithm_id' => $algorithmId,
             'algorithm_name' => $algorithmName,
-            'signal_type' => 'first_half_goal',
+            'signal_type' => $signalType,
             'probability' => $payload['probability'],
             'form_score' => $payload['form_score'],
             'h2h_score' => $payload['h2h_score'],
@@ -284,5 +365,14 @@ final class Scanner
             'h2h_data' => $payload['h2h_data'],
             'algorithm_data' => $payload['algorithm_data'],
         ];
+    }
+
+    private function calculateRatio(int $value, int $games): float
+    {
+        if ($games <= 0) {
+            return 0.0;
+        }
+
+        return ($value / 2) / $games;
     }
 }

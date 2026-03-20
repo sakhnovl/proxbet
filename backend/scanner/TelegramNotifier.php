@@ -108,7 +108,8 @@ final class TelegramNotifier
                         $this->channelId,
                         $message,
                         $algorithmId,
-                        (string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId))
+                        (string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId)),
+                        $this->buildAlgorithmPayload($match)
                     );
                 } catch (\Throwable $e) {
                     Logger::error('Failed to save bet message to database', [
@@ -139,67 +140,26 @@ final class TelegramNotifier
     private function formatMessage(array $match): string
     {
         $algorithmId = (int) ($match['algorithm_id'] ?? 1);
-        $algorithmName = htmlspecialchars((string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId)), ENT_QUOTES, 'UTF-8');
-        $home = htmlspecialchars((string) ($match['home'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $away = htmlspecialchars((string) ($match['away'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $liga = htmlspecialchars((string) ($match['liga'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $time = htmlspecialchars((string) ($match['time'] ?? ''), ENT_QUOTES, 'UTF-8');
-        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
-
-        $scoreHome = (int) ($match['score_home'] ?? 0);
-        $scoreAway = (int) ($match['score_away'] ?? 0);
-        $score = sprintf('%d:%d', $scoreHome, $scoreAway);
-
-        $stats = $match['stats'] ?? [];
-        $shotsTotal = (int) ($stats['shots_total'] ?? 0);
-        $shotsOnTarget = (int) ($stats['shots_on_target'] ?? 0);
-        $dangerAttacks = (int) ($stats['dangerous_attacks'] ?? 0);
-        $corners = (int) ($stats['corners'] ?? 0);
-
-        $formData = $match['form_data'] ?? [];
-        $homeFormGoals = (int) ($formData['home_goals'] ?? 0);
-        $awayFormGoals = (int) ($formData['away_goals'] ?? 0);
-
-        $h2hData = $match['h2h_data'] ?? [];
-        $homeH2hGoals = (int) ($h2hData['home_goals'] ?? 0);
-        $awayH2hGoals = (int) ($h2hData['away_goals'] ?? 0);
-
-        $header = "🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>\n";
-        $header .= "🧠 <b>{$algorithmName}</b>\n\n";
-        $header .= "⚽ <b>{$home} - {$away}</b>\n";
-        $header .= "🏆 {$liga}\n";
-        $header .= "⏱ Время: <b>{$time}</b>\n";
-        $header .= "⚽ Счёт: <b>{$score}</b>\n\n";
-
-        $statsBlock = "📈 <b>Статистика матча:</b>\n";
-        $statsBlock .= "├ Удары: {$shotsTotal} (в створ: {$shotsOnTarget})\n";
-        $statsBlock .= "├ Опасные атаки: {$dangerAttacks}\n";
-        $statsBlock .= "└ Угловые: {$corners}\n\n";
 
         if ($algorithmId === 2) {
-            $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
-            $homeWinOdd = isset($algorithmData['home_win_odd']) ? sprintf('%.2f', (float) $algorithmData['home_win_odd']) : '-';
-            $totalLine = isset($algorithmData['total_line']) && $algorithmData['total_line'] !== null
-                ? sprintf('%.2f', (float) $algorithmData['total_line'])
-                : '-';
-            $over25Odd = isset($algorithmData['over_25_odd']) && $algorithmData['over_25_odd'] !== null
-                ? sprintf('%.2f', (float) $algorithmData['over_25_odd'])
-                : '-';
-            $over25Text = !empty($algorithmData['over_25_odd_check_skipped'])
-                ? "линия {$totalLine} > 2.5, проверка пропущена"
-                : $over25Odd;
-            $homeFirstHalfGoals = (int) ($algorithmData['home_first_half_goals_in_last_5'] ?? 0);
-            $h2hFirstHalfGoals = (int) ($algorithmData['h2h_first_half_goals_in_last_5'] ?? 0);
-
-            return $header
-                . "📌 \n"
-                . "├ ТБ 2.5: {$over25Text}\n"
-                . "├ Хозяева забивали в 1T: {$homeFirstHalfGoals}/5\n"
-                . "└ H2H с голом любой команды в 1T: {$h2hFirstHalfGoals}/5\n\n"
-                . $statsBlock
-                . "📋 <b>Форма 1T:</b> дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
-                . "🤝 <b>H2H 1T:</b> дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
+            return $this->formatAlgorithmTwoMessage($match);
         }
+
+        if ($algorithmId === 3) {
+            return $this->formatAlgorithmThreeMessage($match);
+        }
+
+        return $this->formatAlgorithmOneMessage($match);
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function formatAlgorithmOneMessage(array $match): string
+    {
+        $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
+        $statsBlock = $this->buildStatsBlock($match);
+        $formBlock = $this->buildFormAndH2hBlock($match);
 
         $probability = sprintf('%.0f%%', ((float) ($match['probability'] ?? 0)) * 100);
         $formScore = sprintf('%.2f', (float) ($match['form_score'] ?? 0));
@@ -212,8 +172,152 @@ final class TelegramNotifier
             . "├ H2H: {$h2hScore} (20%)\n"
             . "└ Live: {$liveScore} (40%)\n\n"
             . $statsBlock
-            . "📋 <b>Форма 1T:</b> дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
-            . "🤝 <b>H2H 1T:</b> дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
+            . $formBlock;
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function formatAlgorithmTwoMessage(array $match): string
+    {
+        $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
+        $statsBlock = $this->buildStatsBlock($match);
+        $formBlock = $this->buildFormAndH2hBlock($match);
+
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+        $totalLine = isset($algorithmData['total_line']) && $algorithmData['total_line'] !== null
+            ? sprintf('%.2f', (float) $algorithmData['total_line'])
+            : '-';
+        $over25Odd = isset($algorithmData['over_25_odd']) && $algorithmData['over_25_odd'] !== null
+            ? sprintf('%.2f', (float) $algorithmData['over_25_odd'])
+            : '-';
+        $over25Text = !empty($algorithmData['over_25_odd_check_skipped'])
+            ? "линия {$totalLine} > 2.5, проверка пропущена"
+            : $over25Odd;
+        $homeFirstHalfGoals = (int) ($algorithmData['home_first_half_goals_in_last_5'] ?? 0);
+        $h2hFirstHalfGoals = (int) ($algorithmData['h2h_first_half_goals_in_last_5'] ?? 0);
+
+        return $header
+            . "📌 <b>Условия алгоритма 2</b>\n"
+            . "├ ТБ 2.5: {$over25Text}\n"
+            . "├ Хозяева забивали в 1Т: {$homeFirstHalfGoals}/5\n"
+            . "└ H2H с голом любой команды в 1Т: {$h2hFirstHalfGoals}/5\n\n"
+            . $statsBlock
+            . $formBlock;
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function formatAlgorithmThreeMessage(array $match): string
+    {
+        $header = $this->buildHeader($match, '🎯 <b>СИГНАЛ: ИНДИВИДУАЛЬНЫЙ ТОТАЛ КОМАНДЫ</b>');
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+
+        $selectedTeam = htmlspecialchars((string) ($algorithmData['selected_team_name'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $targetBet = htmlspecialchars((string) ($algorithmData['selected_team_target_bet'] ?? 'ИТБ больше 0.5'), ENT_QUOTES, 'UTF-8');
+        $triggeredRule = htmlspecialchars(
+            (string) ($algorithmData['triggered_rule_label'] ?? $algorithmData['triggered_rule'] ?? '-'),
+            ENT_QUOTES,
+            'UTF-8'
+        );
+        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $matchStatus = htmlspecialchars((string) ($match['match_status'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        $homeGames = (int) ($algorithmData['table_games_1'] ?? 0);
+        $homeGoals = (int) ($algorithmData['table_goals_1'] ?? 0);
+        $homeMissed = (int) ($algorithmData['table_missed_1'] ?? 0);
+        $awayGames = (int) ($algorithmData['table_games_2'] ?? 0);
+        $awayGoals = (int) ($algorithmData['table_goals_2'] ?? 0);
+        $awayMissed = (int) ($algorithmData['table_missed_2'] ?? 0);
+        $homeAttackRatio = sprintf('%.2f', (float) ($algorithmData['home_attack_ratio'] ?? 0));
+        $awayDefenseRatio = sprintf('%.2f', (float) ($algorithmData['away_defense_ratio'] ?? 0));
+        $awayAttackRatio = sprintf('%.2f', (float) ($algorithmData['away_attack_ratio'] ?? 0));
+        $homeDefenseRatio = sprintf('%.2f', (float) ($algorithmData['home_defense_ratio'] ?? 0));
+
+        $home = htmlspecialchars((string) ($match['home'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $away = htmlspecialchars((string) ($match['away'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        return $header
+            . "⏸ Статус: <b>{$matchStatus}</b>\n"
+            . "🎯 Команда: <b>{$selectedTeam}</b>\n"
+            . "💸 Ставка: <b>{$targetBet}</b>\n"
+            . "🧮 Сработавшее правило: <b>{$triggeredRule}</b>\n\n"
+            . "📋 <b>Табличные показатели</b>\n"
+            . "├ {$home}: игры {$homeGames}, забито {$homeGoals}, пропущено {$homeMissed}\n"
+            . "├ коэффициенты: атака {$homeAttackRatio}, оборона {$homeDefenseRatio}\n"
+            . "├ {$away}: игры {$awayGames}, забито {$awayGoals}, пропущено {$awayMissed}\n"
+            . "└ коэффициенты: атака {$awayAttackRatio}, оборона {$awayDefenseRatio}\n\n"
+            . "🤖 <b>Для AI</b>: оцени именно ставку <b>{$targetBet}</b> по выбранной команде <b>{$selectedTeam}</b>.\n"
+            . "📝 <b>Причина сигнала</b>: {$reason}";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function buildHeader(array $match, string $title): string
+    {
+        $algorithmId = (int) ($match['algorithm_id'] ?? 1);
+        $algorithmName = htmlspecialchars((string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId)), ENT_QUOTES, 'UTF-8');
+        $home = htmlspecialchars((string) ($match['home'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $away = htmlspecialchars((string) ($match['away'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $liga = htmlspecialchars((string) ($match['liga'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $time = htmlspecialchars((string) ($match['time'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $scoreHome = (int) ($match['score_home'] ?? 0);
+        $scoreAway = (int) ($match['score_away'] ?? 0);
+        $score = sprintf('%d:%d', $scoreHome, $scoreAway);
+
+        return $title . "\n"
+            . "🧠 <b>{$algorithmName}</b>\n\n"
+            . "⚽ <b>{$home} - {$away}</b>\n"
+            . "🏆 {$liga}\n"
+            . "⏱ Время: <b>{$time}</b>\n"
+            . "⚽ Счет: <b>{$score}</b>\n\n";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function buildStatsBlock(array $match): string
+    {
+        $stats = $match['stats'] ?? [];
+        $shotsTotal = (int) ($stats['shots_total'] ?? 0);
+        $shotsOnTarget = (int) ($stats['shots_on_target'] ?? 0);
+        $dangerAttacks = (int) ($stats['dangerous_attacks'] ?? 0);
+        $corners = (int) ($stats['corners'] ?? 0);
+        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        return "📈 <b>Статистика матча</b>\n"
+            . "├ Удары: {$shotsTotal} (в створ: {$shotsOnTarget})\n"
+            . "├ Опасные атаки: {$dangerAttacks}\n"
+            . "├ Угловые: {$corners}\n"
+            . "└ Причина: {$reason}\n\n";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function buildFormAndH2hBlock(array $match): string
+    {
+        $formData = $match['form_data'] ?? [];
+        $h2hData = $match['h2h_data'] ?? [];
+        $homeFormGoals = (int) ($formData['home_goals'] ?? 0);
+        $awayFormGoals = (int) ($formData['away_goals'] ?? 0);
+        $homeH2hGoals = (int) ($h2hData['home_goals'] ?? 0);
+        $awayH2hGoals = (int) ($h2hData['away_goals'] ?? 0);
+
+        return "📋 <b>Форма 1T</b>: дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
+            . "🤝 <b>H2H 1T</b>: дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     * @return array<string,mixed>|null
+     */
+    private function buildAlgorithmPayload(array $match): ?array
+    {
+        $algorithmData = $match['algorithm_data'] ?? null;
+        return is_array($algorithmData) ? $algorithmData : null;
     }
 
     private function loadSentMatches(): void

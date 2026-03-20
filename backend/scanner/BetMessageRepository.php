@@ -19,15 +19,7 @@ final class BetMessageRepository
     }
 
     /**
-     * Save a new bet message to database.
-     *
-     * @param int $matchId
-     * @param int $messageId Telegram message ID
-     * @param string $chatId Telegram chat ID
-     * @param string $messageText Full message text
-     * @param int $algorithmId Scanner algorithm identifier
-     * @param string $algorithmName Scanner algorithm label
-     * @return int Inserted bet message ID
+     * @param array<string,mixed>|null $algorithmPayload
      */
     public function saveBetMessage(
         int $matchId,
@@ -35,15 +27,24 @@ final class BetMessageRepository
         string $chatId,
         string $messageText,
         int $algorithmId,
-        string $algorithmName
-    ): int
-    {
+        string $algorithmName,
+        ?array $algorithmPayload = null
+    ): int {
         try {
             $stmt = $this->pdo->prepare(
-                'INSERT INTO `bet_messages` (`match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `bet_status`) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO `bet_messages` (`match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `algorithm_payload_json`, `bet_status`) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $stmt->execute([$matchId, $messageId, $chatId, $messageText, $algorithmId, $algorithmName, 'pending']);
+            $stmt->execute([
+                $matchId,
+                $messageId,
+                $chatId,
+                $messageText,
+                $algorithmId,
+                $algorithmName,
+                $this->encodePayload($algorithmPayload),
+                'pending',
+            ]);
 
             $id = (int) $this->pdo->lastInsertId();
 
@@ -67,8 +68,6 @@ final class BetMessageRepository
     }
 
     /**
-     * Get all pending bets with their match data.
-     *
      * @return array<int,array<string,mixed>>
      */
     public function getPendingBets(): array
@@ -83,12 +82,15 @@ final class BetMessageRepository
                 . 'bm.`message_text`, '
                 . 'bm.`algorithm_id`, '
                 . 'bm.`algorithm_name`, '
+                . 'bm.`algorithm_payload_json`, '
                 . 'bm.`bet_status`, '
                 . 'bm.`sent_at`, '
                 . 'm.`time`, '
                 . 'm.`match_status`, '
                 . 'm.`live_ht_hscore`, '
                 . 'm.`live_ht_ascore`, '
+                . 'm.`live_hscore`, '
+                . 'm.`live_ascore`, '
                 . 'm.`home`, '
                 . 'm.`away` '
                 . 'FROM `bet_messages` bm '
@@ -105,13 +107,6 @@ final class BetMessageRepository
         }
     }
 
-    /**
-     * Update bet status and set checked_at timestamp.
-     *
-     * @param int $betId
-     * @param string $status 'won' or 'lost'
-     * @return bool
-     */
     public function updateBetStatus(int $betId, string $status): bool
     {
         if (!in_array($status, ['won', 'lost'], true)) {
@@ -128,7 +123,6 @@ final class BetMessageRepository
             $stmt->execute([$status, $betId]);
 
             $updated = $stmt->rowCount() > 0;
-
             if ($updated) {
                 Logger::info('Bet status updated', [
                     'bet_id' => $betId,
@@ -148,16 +142,13 @@ final class BetMessageRepository
     }
 
     /**
-     * Get bet message by match ID.
-     *
-     * @param int $matchId
      * @return array<string,mixed>|null
      */
     public function getBetByMatchId(int $matchId): ?array
     {
         try {
             $stmt = $this->pdo->prepare(
-                'SELECT `id`, `match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `bet_status`, `sent_at`, `checked_at` '
+                'SELECT `id`, `match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `algorithm_payload_json`, `bet_status`, `sent_at`, `checked_at` '
                 . 'FROM `bet_messages` '
                 . 'WHERE `match_id` = ? '
                 . 'ORDER BY `sent_at` DESC '
@@ -177,8 +168,6 @@ final class BetMessageRepository
     }
 
     /**
-     * Get overall bet statistics.
-     *
      * @return array{total:int,pending:int,won:int,lost:int,win_rate:float,loss_rate:float}
      */
     public function getStatistics(): array
@@ -194,7 +183,6 @@ final class BetMessageRepository
             );
 
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            
             if (!is_array($row)) {
                 return [
                     'total' => 0,
@@ -210,18 +198,15 @@ final class BetMessageRepository
             $pending = (int) ($row['pending'] ?? 0);
             $won = (int) ($row['won'] ?? 0);
             $lost = (int) ($row['lost'] ?? 0);
-            
             $completed = $won + $lost;
-            $winRate = $completed > 0 ? ($won / $completed) * 100 : 0.0;
-            $lossRate = $completed > 0 ? ($lost / $completed) * 100 : 0.0;
 
             return [
                 'total' => $total,
                 'pending' => $pending,
                 'won' => $won,
                 'lost' => $lost,
-                'win_rate' => $winRate,
-                'loss_rate' => $lossRate,
+                'win_rate' => $completed > 0 ? ($won / $completed) * 100 : 0.0,
+                'loss_rate' => $completed > 0 ? ($lost / $completed) * 100 : 0.0,
             ];
         } catch (\Throwable $e) {
             Logger::error('Failed to get statistics', ['error' => $e->getMessage()]);
@@ -237,15 +222,12 @@ final class BetMessageRepository
     }
 
     /**
-     * Get statistics for a specific time period.
-     *
-     * @param string $period 'today', 'week', 'month', or 'all'
      * @return array{total:int,pending:int,won:int,lost:int,win_rate:float,loss_rate:float,period:string}
      */
     public function getStatisticsByPeriod(string $period = 'all'): array
     {
         $whereClause = '';
-        
+
         switch ($period) {
             case 'today':
                 $whereClause = 'WHERE DATE(`sent_at`) = CURDATE()';
@@ -257,22 +239,21 @@ final class BetMessageRepository
                 $whereClause = 'WHERE `sent_at` >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
                 break;
             default:
-                $whereClause = '';
                 $period = 'all';
         }
 
         try {
-            $sql = 'SELECT '
+            $stmt = $this->pdo->query(
+                'SELECT '
                 . 'COUNT(*) AS total, '
                 . 'SUM(CASE WHEN `bet_status` = \'pending\' THEN 1 ELSE 0 END) AS pending, '
                 . 'SUM(CASE WHEN `bet_status` = \'won\' THEN 1 ELSE 0 END) AS won, '
                 . 'SUM(CASE WHEN `bet_status` = \'lost\' THEN 1 ELSE 0 END) AS lost '
                 . 'FROM `bet_messages` '
-                . $whereClause;
+                . $whereClause
+            );
 
-            $stmt = $this->pdo->query($sql);
             $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            
             if (!is_array($row)) {
                 return [
                     'total' => 0,
@@ -289,18 +270,15 @@ final class BetMessageRepository
             $pending = (int) ($row['pending'] ?? 0);
             $won = (int) ($row['won'] ?? 0);
             $lost = (int) ($row['lost'] ?? 0);
-            
             $completed = $won + $lost;
-            $winRate = $completed > 0 ? ($won / $completed) * 100 : 0.0;
-            $lossRate = $completed > 0 ? ($lost / $completed) * 100 : 0.0;
 
             return [
                 'total' => $total,
                 'pending' => $pending,
                 'won' => $won,
                 'lost' => $lost,
-                'win_rate' => $winRate,
-                'loss_rate' => $lossRate,
+                'win_rate' => $completed > 0 ? ($won / $completed) * 100 : 0.0,
+                'loss_rate' => $completed > 0 ? ($lost / $completed) * 100 : 0.0,
                 'period' => $period,
             ];
         } catch (\Throwable $e) {
@@ -321,9 +299,6 @@ final class BetMessageRepository
     }
 
     /**
-     * Get recent bet history.
-     *
-     * @param int $limit
      * @return array<int,array<string,mixed>>
      */
     public function getRecentBets(int $limit = 10): array
@@ -333,13 +308,16 @@ final class BetMessageRepository
                 'SELECT '
                 . 'bm.`id` AS bet_id, '
                 . 'bm.`match_id`, '
+                . 'bm.`algorithm_id`, '
                 . 'bm.`bet_status`, '
                 . 'bm.`sent_at`, '
                 . 'bm.`checked_at`, '
                 . 'm.`home`, '
                 . 'm.`away`, '
                 . 'm.`live_ht_hscore`, '
-                . 'm.`live_ht_ascore` '
+                . 'm.`live_ht_ascore`, '
+                . 'm.`live_hscore`, '
+                . 'm.`live_ascore` '
                 . 'FROM `bet_messages` bm '
                 . 'INNER JOIN `matches` m ON bm.`match_id` = m.`id` '
                 . 'ORDER BY bm.`sent_at` DESC '
@@ -354,5 +332,18 @@ final class BetMessageRepository
             Logger::error('Failed to get recent bets', ['error' => $e->getMessage()]);
             return [];
         }
+    }
+
+    /**
+     * @param array<string,mixed>|null $payload
+     */
+    private function encodePayload(?array $payload): ?string
+    {
+        if ($payload === null) {
+            return null;
+        }
+
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return $json === false ? null : $json;
     }
 }

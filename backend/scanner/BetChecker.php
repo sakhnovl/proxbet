@@ -14,6 +14,8 @@ use Proxbet\Line\Logger;
  */
 final class BetChecker
 {
+    private const STATUS_FINISHED = 'Игра завершена';
+
     private string $apiBase;
 
     public function __construct(
@@ -106,6 +108,11 @@ final class BetChecker
      */
     private function checkBetOutcome(array $bet): string
     {
+        $algorithmId = max(1, (int) ($bet['algorithm_id'] ?? 1));
+        if ($algorithmId === 3) {
+            return $this->checkAlgorithmThreeOutcome($bet);
+        }
+
         $time = (string) ($bet['time'] ?? '');
         $status = (string) ($bet['match_status'] ?? '');
         $htHome = (int) ($bet['live_ht_hscore'] ?? 0);
@@ -134,6 +141,38 @@ final class BetChecker
         }
 
         // Still pending - match not finished first half yet
+        return 'pending';
+    }
+
+    /**
+     * @param array<string,mixed> $bet
+     */
+    private function checkAlgorithmThreeOutcome(array $bet): string
+    {
+        $payload = $this->decodeAlgorithmPayload($bet['algorithm_payload_json'] ?? null);
+        $selectedSide = (string) ($payload['selected_team_side'] ?? '');
+
+        if ($selectedSide !== 'home' && $selectedSide !== 'away') {
+            Logger::error('Algorithm 3 bet payload is invalid', [
+                'bet_id' => $bet['bet_id'] ?? null,
+                'match_id' => $bet['match_id'] ?? null,
+                'selected_team_side' => $selectedSide,
+            ]);
+            return 'pending';
+        }
+
+        $teamGoals = $selectedSide === 'home'
+            ? (int) ($bet['live_hscore'] ?? 0)
+            : (int) ($bet['live_ascore'] ?? 0);
+
+        if ($teamGoals >= 1) {
+            return 'won';
+        }
+
+        if ((string) ($bet['match_status'] ?? '') === self::STATUS_FINISHED) {
+            return 'lost';
+        }
+
         return 'pending';
     }
 
@@ -225,6 +264,11 @@ final class BetChecker
      */
     private function formatResultMessage(array $bet, string $originalText, string $outcome): string
     {
+        $algorithmId = max(1, (int) ($bet['algorithm_id'] ?? 1));
+        if ($algorithmId === 3) {
+            return $this->formatAlgorithmThreeResultMessage($bet, $originalText, $outcome);
+        }
+
         $htHome = (int) ($bet['live_ht_hscore'] ?? 0);
         $htAway = (int) ($bet['live_ht_ascore'] ?? 0);
         $score = sprintf('%d:%d', $htHome, $htAway);
@@ -234,12 +278,67 @@ final class BetChecker
         
         if ($outcome === 'won') {
             $resultBlock .= "✅ <b>СТАВКА ЗАШЛА!</b>\n";
+            $resultBlock .= "⚽ Гооол: <b>{$score}</b>\n";
+        } else {
+            $resultBlock .= "❌ <b>СТАВКА НЕ ЗАШЛА</b>\n";
+            $resultBlock .= "⚽ Счет 1T: <b>{$score}</b>\n";
+        }
+        
+        
+        $resultBlock .= "⏱ Время: <b>{$time}</b>";
+
+        return $originalText . $resultBlock;
+    }
+
+    /**
+     * @param mixed $rawPayload
+     * @return array<string,mixed>
+     */
+    private function decodeAlgorithmPayload(mixed $rawPayload): array
+    {
+        if (!is_string($rawPayload) || trim($rawPayload) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($rawPayload, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<string,mixed> $bet
+     */
+    private function formatAlgorithmThreeResultMessage(array $bet, string $originalText, string $outcome): string
+    {
+        $payload = $this->decodeAlgorithmPayload($bet['algorithm_payload_json'] ?? null);
+        $selectedSide = (string) ($payload['selected_team_side'] ?? '');
+        $selectedTeamName = htmlspecialchars(
+            (string) ($payload['selected_team_name'] ?? ($selectedSide === 'away' ? ($bet['away'] ?? '') : ($bet['home'] ?? ''))),
+            ENT_QUOTES,
+            'UTF-8'
+        );
+        $targetBet = htmlspecialchars(
+            (string) ($payload['selected_team_target_bet'] ?? ('ИТБ ' . $selectedTeamName . ' больше 0.5')),
+            ENT_QUOTES,
+            'UTF-8'
+        );
+        $liveHome = (int) ($bet['live_hscore'] ?? 0);
+        $liveAway = (int) ($bet['live_ascore'] ?? 0);
+        $teamGoals = $selectedSide === 'away' ? $liveAway : $liveHome;
+        $score = sprintf('%d:%d', $liveHome, $liveAway);
+        $status = htmlspecialchars((string) ($bet['match_status'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        $resultBlock = "\n\n====================\n";
+        if ($outcome === 'won') {
+            $resultBlock .= "✅ <b>СТАВКА ЗАШЛА!</b>\n";
         } else {
             $resultBlock .= "❌ <b>СТАВКА НЕ ЗАШЛА</b>\n";
         }
-        
-        $resultBlock .= "⚽ Счет 1T: <b>{$score}</b>\n";
-        $resultBlock .= "⏱ Время: <b>{$time}</b>";
+
+        $resultBlock .= "🎯 Команда: <b>{$selectedTeamName}</b>\n";
+        $resultBlock .= "💸 Ставка: <b>{$targetBet}</b>\n";
+        $resultBlock .= "⚽ Финальный счет: <b>{$score}</b>\n";
+        $resultBlock .= "📊 Голов команды: <b>{$teamGoals}</b>\n";
+        $resultBlock .= "⏱ Статус матча: <b>{$status}</b>";
 
         return $originalText . $resultBlock;
     }

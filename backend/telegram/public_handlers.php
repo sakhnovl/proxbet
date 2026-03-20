@@ -404,6 +404,34 @@ function enrichAnalysisContextWithScanner(array $context): array
         'time_str' => (string) ($context['time'] ?? ''),
     ];
 
+    if ($algorithmId === 3) {
+        $algorithmThreeData = buildAlgorithmThreeContextData($context);
+        $decision = $filter->shouldBetAlgorithmThree($algorithmThreeData);
+
+        $context['scanner_form_score'] = null;
+        $context['scanner_h2h_score'] = null;
+        $context['scanner_live_score'] = null;
+        $context['scanner_probability'] = null;
+        $context['scanner_bet'] = $decision['bet'] ? 'yes' : 'no';
+        $context['scanner_reason'] = $decision['reason'];
+        $context['scanner_signal_type'] = 'team_total';
+        $context['scanner_algorithm_basis'] = 'table_rules';
+        $context['scanner_algorithm_data'] = array_merge($algorithmThreeData, [
+            'selected_team_side' => $decision['selected_team_side'] ?? ($algorithmThreeData['selected_team_side'] ?? null),
+            'selected_team_name' => $decision['selected_team_name'] ?? ($algorithmThreeData['selected_team_name'] ?? null),
+            'selected_team_goals_current' => $decision['selected_team_goals_current'] ?? ($algorithmThreeData['selected_team_goals_current'] ?? null),
+            'selected_team_target_bet' => $decision['selected_team_target_bet'] ?? ($algorithmThreeData['selected_team_target_bet'] ?? null),
+            'triggered_rule' => $decision['triggered_rule'] ?? ($algorithmThreeData['triggered_rule'] ?? null),
+            'triggered_rule_label' => $decision['triggered_rule_label'] ?? ($algorithmThreeData['triggered_rule_label'] ?? null),
+            'home_attack_ratio' => $decision['home_attack_ratio'] ?? ($algorithmThreeData['home_attack_ratio'] ?? null),
+            'away_defense_ratio' => $decision['away_defense_ratio'] ?? ($algorithmThreeData['away_defense_ratio'] ?? null),
+            'away_attack_ratio' => $decision['away_attack_ratio'] ?? ($algorithmThreeData['away_attack_ratio'] ?? null),
+            'home_defense_ratio' => $decision['home_defense_ratio'] ?? ($algorithmThreeData['home_defense_ratio'] ?? null),
+        ]);
+
+        return $context;
+    }
+
     if ($algorithmId === 2) {
         $algorithmTwoData = buildAlgorithmTwoContextData($context);
         $decision = $filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
@@ -476,6 +504,115 @@ function buildAlgorithmTwoContextData(array $context): array
         'h2h_first_half_goals_in_last_5' => $h2hFirstHalfGoals ?? 0,
         'has_data' => $hasData,
     ];
+}
+
+/**
+ * @param array<string,mixed> $context
+ * @return array<string,mixed>
+ */
+function buildAlgorithmThreeContextData(array $context): array
+{
+    $payload = [];
+    $rawPayload = $context['algorithm_payload_json'] ?? null;
+    if (is_string($rawPayload) && trim($rawPayload) !== '') {
+        $decoded = json_decode($rawPayload, true);
+        if (is_array($decoded)) {
+            $payload = $decoded;
+        }
+    }
+
+    $tableGames1 = is_numeric($context['table_games_1'] ?? null) ? (int) $context['table_games_1'] : null;
+    $tableGoals1 = is_numeric($context['table_goals_1'] ?? null) ? (int) $context['table_goals_1'] : null;
+    $tableMissed1 = is_numeric($context['table_missed_1'] ?? null) ? (int) $context['table_missed_1'] : null;
+    $tableGames2 = is_numeric($context['table_games_2'] ?? null) ? (int) $context['table_games_2'] : null;
+    $tableGoals2 = is_numeric($context['table_goals_2'] ?? null) ? (int) $context['table_goals_2'] : null;
+    $tableMissed2 = is_numeric($context['table_missed_2'] ?? null) ? (int) $context['table_missed_2'] : null;
+
+    $selectedTeamSide = is_string($payload['selected_team_side'] ?? null) ? $payload['selected_team_side'] : null;
+    $selectedTeamName = is_string($payload['selected_team_name'] ?? null) ? $payload['selected_team_name'] : null;
+    $selectedTeamBet = is_string($payload['selected_team_target_bet'] ?? null) ? $payload['selected_team_target_bet'] : null;
+
+    if ($selectedTeamSide === null || $selectedTeamName === null || $selectedTeamBet === null) {
+        $homeAttackRatio = calculateAlgorithmThreeRatio($tableGoals1, $tableGames1);
+        $awayDefenseRatio = calculateAlgorithmThreeRatio($tableMissed2, $tableGames2);
+        $awayAttackRatio = calculateAlgorithmThreeRatio($tableGoals2, $tableGames2);
+        $homeDefenseRatio = calculateAlgorithmThreeRatio($tableMissed1, $tableGames1);
+        $threshold = 1.5;
+
+        $homeRuleMatched = $homeAttackRatio > $threshold && $awayDefenseRatio > $threshold;
+        $awayRuleMatched = $awayAttackRatio > $threshold && $homeDefenseRatio > $threshold;
+
+        if ($homeRuleMatched && !$awayRuleMatched) {
+            $selectedTeamSide = 'home';
+            $selectedTeamName = (string) ($context['home'] ?? '');
+        } elseif ($awayRuleMatched && !$homeRuleMatched) {
+            $selectedTeamSide = 'away';
+            $selectedTeamName = (string) ($context['away'] ?? '');
+        } elseif ($homeRuleMatched && $awayRuleMatched) {
+            $homeStrength = $homeAttackRatio + $awayDefenseRatio;
+            $awayStrength = $awayAttackRatio + $homeDefenseRatio;
+            if ($homeStrength >= $awayStrength) {
+                $selectedTeamSide = 'home';
+                $selectedTeamName = (string) ($context['home'] ?? '');
+            } else {
+                $selectedTeamSide = 'away';
+                $selectedTeamName = (string) ($context['away'] ?? '');
+            }
+        }
+
+        if ($selectedTeamSide !== null && $selectedTeamName !== null) {
+            $selectedTeamBet = 'ИТБ ' . $selectedTeamName . ' больше 0.5';
+        }
+    }
+
+    return [
+        'table_games_1' => $tableGames1,
+        'table_goals_1' => $tableGoals1,
+        'table_missed_1' => $tableMissed1,
+        'table_games_2' => $tableGames2,
+        'table_goals_2' => $tableGoals2,
+        'table_missed_2' => $tableMissed2,
+        'live_hscore' => normalizeInt($context['live_hscore'] ?? null),
+        'live_ascore' => normalizeInt($context['live_ascore'] ?? null),
+        'match_status' => (string) ($context['match_status'] ?? ''),
+        'home' => (string) ($context['home'] ?? ''),
+        'away' => (string) ($context['away'] ?? ''),
+        'selected_team_side' => $selectedTeamSide,
+        'selected_team_name' => $selectedTeamName,
+        'selected_team_goals_current' => $selectedTeamSide === 'away'
+            ? normalizeInt($context['live_ascore'] ?? null)
+            : normalizeInt($context['live_hscore'] ?? null),
+        'selected_team_target_bet' => $selectedTeamBet,
+        'triggered_rule' => is_string($payload['triggered_rule'] ?? null) ? $payload['triggered_rule'] : null,
+        'triggered_rule_label' => is_string($payload['triggered_rule_label'] ?? null) ? $payload['triggered_rule_label'] : null,
+        'home_attack_ratio' => is_numeric($payload['home_attack_ratio'] ?? null)
+            ? (float) $payload['home_attack_ratio']
+            : calculateAlgorithmThreeRatio($tableGoals1, $tableGames1),
+        'away_defense_ratio' => is_numeric($payload['away_defense_ratio'] ?? null)
+            ? (float) $payload['away_defense_ratio']
+            : calculateAlgorithmThreeRatio($tableMissed2, $tableGames2),
+        'away_attack_ratio' => is_numeric($payload['away_attack_ratio'] ?? null)
+            ? (float) $payload['away_attack_ratio']
+            : calculateAlgorithmThreeRatio($tableGoals2, $tableGames2),
+        'home_defense_ratio' => is_numeric($payload['home_defense_ratio'] ?? null)
+            ? (float) $payload['home_defense_ratio']
+            : calculateAlgorithmThreeRatio($tableMissed1, $tableGames1),
+        'has_data' => $tableGames1 !== null
+            && $tableGoals1 !== null
+            && $tableMissed1 !== null
+            && $tableGames2 !== null
+            && $tableGoals2 !== null
+            && $tableMissed2 !== null,
+    ];
+}
+
+function calculateAlgorithmThreeRatio(?int $value, ?int $games): float
+{
+    if ($value === null || $games === null || $games <= 0) {
+        return 0.0;
+    }
+
+    return ($value / 2) / $games;
 }
 
 function extractAlgorithmTwoH2hFirstHalfGoals(mixed $sgiJson): ?int

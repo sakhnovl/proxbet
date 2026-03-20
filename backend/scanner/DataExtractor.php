@@ -124,7 +124,19 @@ final class DataExtractor
      * Extract live statistics from match record.
      *
      * @param array<string,mixed> $match
-     * @return array{minute:int,shots_total:int,shots_on_target:int,dangerous_attacks:int,corners:int,ht_hscore:int,ht_ascore:int,time_str:string}
+     * @return array{
+     *   minute:int,
+     *   shots_total:int,
+     *   shots_on_target:int,
+     *   dangerous_attacks:int,
+     *   corners:int,
+     *   ht_hscore:int,
+     *   ht_ascore:int,
+     *   live_hscore:int,
+     *   live_ascore:int,
+     *   time_str:string,
+     *   match_status:string
+     * }
      */
     public function extractLiveData(array $match): array
     {
@@ -149,6 +161,8 @@ final class DataExtractor
 
         $htHscore = $this->getIntOrZero($match, 'live_ht_hscore');
         $htAscore = $this->getIntOrZero($match, 'live_ht_ascore');
+        $liveHscore = $this->getIntOrZero($match, 'live_hscore');
+        $liveAscore = $this->getIntOrZero($match, 'live_ascore');
 
         return [
             'minute' => $minute,
@@ -158,7 +172,61 @@ final class DataExtractor
             'corners' => $corners,
             'ht_hscore' => $htHscore,
             'ht_ascore' => $htAscore,
+            'live_hscore' => $liveHscore,
+            'live_ascore' => $liveAscore,
             'time_str' => $timeStr,
+            'match_status' => (string) ($match['match_status'] ?? ''),
+        ];
+    }
+
+    /**
+     * Extract data for algorithm 3.
+     *
+     * @param array<string,mixed> $match
+     * @return array{
+     *   table_games_1:int,
+     *   table_goals_1:int,
+     *   table_missed_1:int,
+     *   table_games_2:int,
+     *   table_goals_2:int,
+     *   table_missed_2:int,
+     *   live_hscore:int,
+     *   live_ascore:int,
+     *   match_status:string,
+     *   home:string,
+     *   away:string,
+     *   has_data:bool
+     * }
+     */
+    public function extractAlgorithmThreeData(array $match): array
+    {
+        $tableGamesOne = $this->getIntOrNull($match, 'table_games_1');
+        $tableGoalsOne = $this->getIntOrNull($match, 'table_goals_1');
+        $tableMissedOne = $this->getIntOrNull($match, 'table_missed_1');
+        $tableGamesTwo = $this->getIntOrNull($match, 'table_games_2');
+        $tableGoalsTwo = $this->getIntOrNull($match, 'table_goals_2');
+        $tableMissedTwo = $this->getIntOrNull($match, 'table_missed_2');
+
+        $hasData = $tableGamesOne !== null
+            && $tableGoalsOne !== null
+            && $tableMissedOne !== null
+            && $tableGamesTwo !== null
+            && $tableGoalsTwo !== null
+            && $tableMissedTwo !== null;
+
+        return [
+            'table_games_1' => $tableGamesOne ?? 0,
+            'table_goals_1' => $tableGoalsOne ?? 0,
+            'table_missed_1' => $tableMissedOne ?? 0,
+            'table_games_2' => $tableGamesTwo ?? 0,
+            'table_goals_2' => $tableGoalsTwo ?? 0,
+            'table_missed_2' => $tableMissedTwo ?? 0,
+            'live_hscore' => $this->getIntOrZero($match, 'live_hscore'),
+            'live_ascore' => $this->getIntOrZero($match, 'live_ascore'),
+            'match_status' => (string) ($match['match_status'] ?? ''),
+            'home' => (string) ($match['home'] ?? ''),
+            'away' => (string) ($match['away'] ?? ''),
+            'has_data' => $hasData,
         ];
     }
 

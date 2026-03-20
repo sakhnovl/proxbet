@@ -90,7 +90,8 @@ final class StatCli
             return 1;
         }
 
-        $calculator = new HtMetricsCalculator();
+        $htCalculator = new HtMetricsCalculator();
+        $tableCalculator = new TableMetricsCalculator();
         
         $home = $options['home'] ?? $this->extractTeamName($decoded, 'H');
         $away = $options['away'] ?? $this->extractTeamName($decoded, 'A');
@@ -100,8 +101,14 @@ final class StatCli
             return 1;
         }
 
-        $details = $calculator->calculateAll($decoded, $home, $away);
-        echo json_encode(['home' => $home, 'away' => $away] + $details, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL;
+        $htDetails = $htCalculator->calculateAll($decoded, $home, $away);
+        $tableDetails = $tableCalculator->calculate($decoded, $home, $away);
+        echo json_encode([
+            'home' => $home,
+            'away' => $away,
+            'ht' => $htDetails,
+            'table' => $tableDetails,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL;
         
         return 0;
     }

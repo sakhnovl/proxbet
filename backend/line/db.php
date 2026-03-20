@@ -199,6 +199,13 @@ final class Db
             'h2h_ht_match_missed_goals_2' => 'INT NULL',
             'h2h_ht_match_goals_2_avg' => 'DOUBLE NULL',
             'h2h_ht_match_missed_2_avg' => 'DOUBLE NULL',
+            'table_games_1' => 'INT NULL',
+            'table_goals_1' => 'INT NULL',
+            'table_missed_1' => 'INT NULL',
+            'table_games_2' => 'INT NULL',
+            'table_goals_2' => 'INT NULL',
+            'table_missed_2' => 'INT NULL',
+            'table_avg' => 'DECIMAL(10,2) NULL',
             // Live match fields
             'live_evid' => 'VARCHAR(64) NULL',
             'live_ht_hscore' => 'INT NULL',
@@ -292,7 +299,8 @@ final class Db
             . 'MODIFY COLUMN `fm1` DECIMAL(10,2) NULL, '
             . 'MODIFY COLUMN `fm1cf` DECIMAL(10,2) NULL, '
             . 'MODIFY COLUMN `fm2` DECIMAL(10,2) NULL, '
-            . 'MODIFY COLUMN `fm2cf` DECIMAL(10,2) NULL'
+            . 'MODIFY COLUMN `fm2cf` DECIMAL(10,2) NULL, '
+            . 'MODIFY COLUMN `table_avg` DECIMAL(10,2) NULL'
         );
 
         // Ensure UNIQUE on evid
@@ -386,6 +394,7 @@ final class Db
             . '  `message_text` TEXT NOT NULL,'
             . '  `algorithm_id` TINYINT UNSIGNED NOT NULL DEFAULT 1,'
             . '  `algorithm_name` VARCHAR(64) NOT NULL DEFAULT \'Алгоритм 1\','
+            . '  `algorithm_payload_json` LONGTEXT NULL,'
             . '  `bet_status` ENUM(\'pending\', \'won\', \'lost\') NOT NULL DEFAULT \'pending\','
             . '  `sent_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,'
             . '  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,'
@@ -412,6 +421,7 @@ final class Db
                 'message_text' => 'TEXT NOT NULL',
                 'algorithm_id' => 'TINYINT UNSIGNED NOT NULL DEFAULT 1',
                 'algorithm_name' => 'VARCHAR(64) NOT NULL DEFAULT \'Алгоритм 1\'',
+                'algorithm_payload_json' => 'LONGTEXT NULL',
                 'bet_status' => 'ENUM(\'pending\', \'won\', \'lost\') NOT NULL DEFAULT \'pending\'',
                 'sent_at' => 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP',
                 'updated_at' => 'TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP',

@@ -12,6 +12,7 @@ require_once __DIR__ . '/statistic/EventsstatClient.php';
 require_once __DIR__ . '/statistic/StatisticRepository.php';
 require_once __DIR__ . '/statistic/TeamNameNormalizer.php';
 require_once __DIR__ . '/statistic/HtMetricsCalculator.php';
+require_once __DIR__ . '/statistic/TableMetricsCalculator.php';
 require_once __DIR__ . '/statistic/StatisticService.php';
 require_once __DIR__ . '/statistic/StatisticServiceFactory.php';
 require_once __DIR__ . '/statistic/StatCli.php';

@@ -17,8 +17,9 @@ final class StatisticServiceFactory
         $config = new Config();
         $client = new EventsstatClient($config);
         $repo = new StatisticRepository($db);
-        $calculator = new HtMetricsCalculator();
+        $htCalculator = new HtMetricsCalculator();
+        $tableCalculator = new TableMetricsCalculator();
 
-        return new StatisticService($config, $client, $repo, $calculator, $db);
+        return new StatisticService($config, $client, $repo, $htCalculator, $tableCalculator, $db);
     }
 }
