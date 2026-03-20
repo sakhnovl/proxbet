@@ -7,6 +7,7 @@ require_once __DIR__ . '/line/logger.php';
 require_once __DIR__ . '/line/db.php';
 
 require_once __DIR__ . '/bans/tg_api.php';
+require_once __DIR__ . '/telegram/public_handlers.php';
 require_once __DIR__ . '/bans/state.php';
 require_once __DIR__ . '/bans/auth.php';
 require_once __DIR__ . '/bans/validation.php';

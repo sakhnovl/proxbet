@@ -13,11 +13,11 @@ require_once __DIR__ . '/TelegramNotifier.php';
 
 use Proxbet\Line\Db;
 use Proxbet\Line\Logger;
-use Proxbet\Scanner\DataExtractor;
-use Proxbet\Scanner\ProbabilityCalculator;
-use Proxbet\Scanner\MatchFilter;
-use Proxbet\Scanner\Scanner;
 use Proxbet\Scanner\BetMessageRepository;
+use Proxbet\Scanner\DataExtractor;
+use Proxbet\Scanner\MatchFilter;
+use Proxbet\Scanner\ProbabilityCalculator;
+use Proxbet\Scanner\Scanner;
 use Proxbet\Scanner\TelegramNotifier;
 
 /**
@@ -30,7 +30,6 @@ use Proxbet\Scanner\TelegramNotifier;
  *   php ScannerCli.php --json --verbose
  */
 
-// Parse command line options
 $options = getopt('', ['json', 'verbose', 'min-probability:', 'no-telegram']);
 $jsonOutput = isset($options['json']);
 $verbose = isset($options['verbose']);
@@ -38,7 +37,6 @@ $minProbability = isset($options['min-probability']) ? (float) $options['min-pro
 $noTelegram = isset($options['no-telegram']);
 
 try {
-    // Load environment variables
     $envFile = __DIR__ . '/../../.env';
     if (file_exists($envFile)) {
         $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -61,21 +59,18 @@ try {
         }
     }
 
-    // Connect to database
     $db = Db::connectFromEnv();
 
-    // Initialize scanner components
     $extractor = new DataExtractor($db);
     $calculator = new ProbabilityCalculator();
     $filter = new MatchFilter(resolveMinProbability($minProbability));
     $scanner = new Scanner($extractor, $calculator, $filter);
 
-    // Initialize Telegram notifier if enabled
     $notifier = null;
     if (!$noTelegram) {
         $token = getenv('TELEGRAM_BOT_TOKEN') ?: '';
         $channelId = getenv('TELEGRAM_CHANNEL_ID') ?: '';
-        
+
         if ($token !== '' && $channelId !== '') {
             $statePath = getenv('SCANNER_STATE_PATH') ?: (__DIR__ . '/scanner_state.json');
             $stateDir = dirname($statePath);
@@ -88,10 +83,8 @@ try {
         }
     }
 
-    // Run scanner
     $result = $scanner->scan();
 
-    // Send Telegram notifications for signals
     if ($notifier !== null && !empty($result['results'])) {
         foreach ($result['results'] as $match) {
             if ($match['decision']['bet']) {
@@ -100,7 +93,6 @@ try {
         }
     }
 
-    // Output results
     if ($jsonOutput) {
         echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL;
     } else {
@@ -134,7 +126,7 @@ try {
 function outputFormatted(array $result, bool $verbose): void
 {
     echo str_repeat('=', 80) . PHP_EOL;
-    echo "СКАНЕР ВЕРОЯТНОСТИ ГОЛА В ПЕРВОМ ТАЙМЕ" . PHP_EOL;
+    echo 'СКАНЕР ГОЛА В ПЕРВОМ ТАЙМЕ' . PHP_EOL;
     echo str_repeat('=', 80) . PHP_EOL;
     echo PHP_EOL;
 
@@ -144,11 +136,10 @@ function outputFormatted(array $result, bool $verbose): void
     echo PHP_EOL;
 
     if (empty($result['results'])) {
-        echo "Нет активных матчей для анализа." . PHP_EOL;
+        echo 'Нет активных матчей для анализа.' . PHP_EOL;
         return;
     }
 
-    // Separate signals and non-signals
     $signals = [];
     $others = [];
 
@@ -160,10 +151,9 @@ function outputFormatted(array $result, bool $verbose): void
         }
     }
 
-    // Display signals first
     if (!empty($signals)) {
         echo str_repeat('=', 80) . PHP_EOL;
-        echo "🔥 СИГНАЛЫ НА СТАВКУ ({$result['signals']})" . PHP_EOL;
+        echo 'СИГНАЛЫ НА СТАВКУ (' . $result['signals'] . ')' . PHP_EOL;
         echo str_repeat('=', 80) . PHP_EOL;
         echo PHP_EOL;
 
@@ -172,10 +162,9 @@ function outputFormatted(array $result, bool $verbose): void
         }
     }
 
-    // Display other matches if verbose
     if ($verbose && !empty($others)) {
         echo str_repeat('=', 80) . PHP_EOL;
-        echo "📊 ОСТАЛЬНЫЕ МАТЧИ (" . count($others) . ")" . PHP_EOL;
+        echo 'ОСТАЛЬНЫЕ РЕЗУЛЬТАТЫ (' . count($others) . ')' . PHP_EOL;
         echo str_repeat('=', 80) . PHP_EOL;
         echo PHP_EOL;
 
@@ -205,16 +194,35 @@ function resolveMinProbability(?float $minProbability): float
  */
 function displayMatch(array $match, bool $isSignal): void
 {
-    $icon = $isSignal ? '✅' : '❌';
-    $probability = sprintf('%.0f%%', $match['probability'] * 100);
+    $icon = $isSignal ? '[+]' : '[-]';
+    $algorithmName = (string) ($match['algorithm_name'] ?? ('Алгоритм ' . (int) ($match['algorithm_id'] ?? 1)));
+    $probability = $match['probability'] !== null
+        ? sprintf('%.0f%%', ((float) $match['probability']) * 100)
+        : null;
 
     echo "{$icon} [{$match['time']}] {$match['home']} - {$match['away']}" . PHP_EOL;
     echo "   {$match['country']} / {$match['liga']}" . PHP_EOL;
-    echo "   Вероятность: {$probability} (форма: " . sprintf('%.2f', $match['form_score']) . 
-         ", H2H: " . sprintf('%.2f', $match['h2h_score']) . 
-         ", live: " . sprintf('%.2f', $match['live_score']) . ")" . PHP_EOL;
-    echo "   Статистика: удары {$match['stats']['shots_total']} (в створ {$match['stats']['shots_on_target']}), " .
-         "опасные атаки {$match['stats']['dangerous_attacks']}, угловые {$match['stats']['corners']}" . PHP_EOL;
+    echo "   Алгоритм: {$algorithmName}" . PHP_EOL;
+
+    if ($probability !== null) {
+        echo '   Вероятность: ' . $probability
+            . ' (форма: ' . sprintf('%.2f', (float) $match['form_score'])
+            . ', H2H: ' . sprintf('%.2f', (float) $match['h2h_score'])
+            . ', live: ' . sprintf('%.2f', (float) $match['live_score']) . ')' . PHP_EOL;
+    } else {
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+        $over25Text = !empty($algorithmData['over_25_odd_check_skipped'])
+            ? 'skip, line ' . sprintf('%.2f', (float) ($algorithmData['total_line'] ?? 0))
+            : sprintf('%.2f', (float) ($algorithmData['over_25_odd'] ?? 0));
+        echo '   Условия A2: П1 ' . sprintf('%.2f', (float) ($algorithmData['home_win_odd'] ?? 0))
+            . ', ТБ 2.5 ' . $over25Text
+            . ', форма ' . (int) ($algorithmData['home_first_half_goals_in_last_5'] ?? 0) . '/5'
+            . ', H2H any team ' . (int) ($algorithmData['h2h_first_half_goals_in_last_5'] ?? 0) . '/5' . PHP_EOL;
+    }
+
+    echo '   Статистика: удары ' . $match['stats']['shots_total']
+        . ' (в створ ' . $match['stats']['shots_on_target'] . '), опасные атаки '
+        . $match['stats']['dangerous_attacks'] . ', угловые ' . $match['stats']['corners'] . PHP_EOL;
     echo "   Форма 1T: дома {$match['form_data']['home_goals']}/5, гости {$match['form_data']['away_goals']}/5" . PHP_EOL;
     echo "   H2H 1T: дома {$match['h2h_data']['home_goals']}/5, гости {$match['h2h_data']['away_goals']}/5" . PHP_EOL;
     echo "   Решение: {$match['decision']['reason']}" . PHP_EOL;

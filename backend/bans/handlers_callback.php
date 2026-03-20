@@ -6,6 +6,10 @@ use Proxbet\Line\Db;
 
 function handleCallback(array $cq, array $ctx): void
 {
+    if (tryHandleAnalysisCallback($cq, $ctx)) {
+        return;
+    }
+
     $cbId = (string) ($cq['id'] ?? '');
     $data = (string) ($cq['data'] ?? '');
     $fromId = (int) ($cq['from']['id'] ?? 0);

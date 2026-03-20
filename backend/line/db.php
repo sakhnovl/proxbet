@@ -384,12 +384,15 @@ final class Db
             . '  `message_id` BIGINT NOT NULL,'
             . '  `chat_id` VARCHAR(64) NOT NULL,'
             . '  `message_text` TEXT NOT NULL,'
+            . '  `algorithm_id` TINYINT UNSIGNED NOT NULL DEFAULT 1,'
+            . '  `algorithm_name` VARCHAR(64) NOT NULL DEFAULT \'Алгоритм 1\','
             . '  `bet_status` ENUM(\'pending\', \'won\', \'lost\') NOT NULL DEFAULT \'pending\','
             . '  `sent_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,'
             . '  `updated_at` TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,'
             . '  `checked_at` TIMESTAMP NULL DEFAULT NULL,'
             . '  PRIMARY KEY (`id`),'
             . '  KEY `idx_match_id` (`match_id`),'
+            . '  KEY `idx_match_algorithm` (`match_id`, `algorithm_id`),'
             . '  KEY `idx_bet_status` (`bet_status`),'
             . '  KEY `idx_sent_at` (`sent_at`)'
             . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
@@ -407,6 +410,8 @@ final class Db
                 'message_id' => 'BIGINT NOT NULL',
                 'chat_id' => 'VARCHAR(64) NOT NULL',
                 'message_text' => 'TEXT NOT NULL',
+                'algorithm_id' => 'TINYINT UNSIGNED NOT NULL DEFAULT 1',
+                'algorithm_name' => 'VARCHAR(64) NOT NULL DEFAULT \'Алгоритм 1\'',
                 'bet_status' => 'ENUM(\'pending\', \'won\', \'lost\') NOT NULL DEFAULT \'pending\'',
                 'sent_at' => 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP',
                 'updated_at' => 'TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP',
@@ -429,12 +434,261 @@ final class Db
                 // already exists
             }
             try {
+                $pdo->exec('ALTER TABLE `bet_messages` ADD KEY `idx_match_algorithm` (`match_id`, `algorithm_id`)');
+            } catch (PDOException) {
+                // already exists
+            }
+            try {
                 $pdo->exec('ALTER TABLE `bet_messages` ADD KEY `idx_bet_status` (`bet_status`)');
             } catch (PDOException) {
                 // already exists
             }
             try {
                 $pdo->exec('ALTER TABLE `bet_messages` ADD KEY `idx_sent_at` (`sent_at`)');
+            } catch (PDOException) {
+                // already exists
+            }
+        }
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS `telegram_users` ('
+            . '  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,'
+            . '  `telegram_user_id` BIGINT NOT NULL,'
+            . '  `username` VARCHAR(255) NULL,'
+            . '  `first_name` VARCHAR(255) NULL,'
+            . '  `last_name` VARCHAR(255) NULL,'
+            . '  `ai_balance` INT NOT NULL DEFAULT 0,'
+            . '  `last_interaction_at` DATETIME NULL,'
+            . '  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,'
+            . '  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,'
+            . '  PRIMARY KEY (`id`),'
+            . '  UNIQUE KEY `uniq_telegram_user_id` (`telegram_user_id`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $telegramUserCols = array_flip(self::getTableColumns($pdo, 'telegram_users'));
+        if (count($telegramUserCols) > 0 && !isset($telegramUserCols['id'])) {
+            throw new \RuntimeException('Invalid schema: telegram_users.id column is missing');
+        }
+
+        if (count($telegramUserCols) > 0) {
+            $wantTelegramUsers = [
+                'telegram_user_id' => 'BIGINT NOT NULL',
+                'username' => 'VARCHAR(255) NULL',
+                'first_name' => 'VARCHAR(255) NULL',
+                'last_name' => 'VARCHAR(255) NULL',
+                'ai_balance' => 'INT NOT NULL DEFAULT 0',
+                'last_interaction_at' => 'DATETIME NULL',
+                'created_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP',
+                'updated_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+            ];
+
+            $addTelegramUsers = [];
+            foreach ($wantTelegramUsers as $name => $typeSql) {
+                if (!isset($telegramUserCols[$name])) {
+                    $addTelegramUsers[] = 'ADD COLUMN `' . $name . '` ' . $typeSql;
+                }
+            }
+            if ($addTelegramUsers !== []) {
+                $pdo->exec('ALTER TABLE `telegram_users` ' . implode(', ', $addTelegramUsers));
+            }
+
+            try {
+                $pdo->exec('ALTER TABLE `telegram_users` ADD UNIQUE KEY `uniq_telegram_user_id` (`telegram_user_id`)');
+            } catch (PDOException) {
+                // already exists
+            }
+
+            if (self::hasTableIndex($pdo, 'telegram_users', 'idx_subscription_until')) {
+                try {
+                    $pdo->exec('ALTER TABLE `telegram_users` DROP INDEX `idx_subscription_until`');
+                } catch (PDOException) {
+                    // ignore
+                }
+            }
+
+            if (isset($telegramUserCols['subscription_until'])) {
+                try {
+                    $pdo->exec('ALTER TABLE `telegram_users` DROP COLUMN `subscription_until`');
+                } catch (PDOException) {
+                    // ignore
+                }
+            }
+        }
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS `ai_analysis_requests` ('
+            . '  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,'
+            . '  `telegram_user_id` BIGINT NOT NULL,'
+            . '  `match_id` BIGINT UNSIGNED NOT NULL,'
+            . '  `bet_message_id` BIGINT UNSIGNED NULL,'
+            . '  `provider` VARCHAR(32) NOT NULL DEFAULT \'gemini\','
+            . '  `model_name` VARCHAR(128) NULL,'
+            . '  `status` ENUM(\'pending\', \'completed\', \'failed\') NOT NULL DEFAULT \'pending\','
+            . '  `cost_charged` INT NOT NULL DEFAULT 0,'
+            . '  `prompt_text` LONGTEXT NOT NULL,'
+            . '  `response_text` LONGTEXT NULL,'
+            . '  `error_text` TEXT NULL,'
+            . '  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,'
+            . '  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,'
+            . '  PRIMARY KEY (`id`),'
+            . '  UNIQUE KEY `uniq_ai_user_match` (`telegram_user_id`, `match_id`),'
+            . '  KEY `idx_ai_match_id` (`match_id`),'
+            . '  KEY `idx_ai_status` (`status`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $analysisCols = array_flip(self::getTableColumns($pdo, 'ai_analysis_requests'));
+        if (count($analysisCols) > 0 && !isset($analysisCols['id'])) {
+            throw new \RuntimeException('Invalid schema: ai_analysis_requests.id column is missing');
+        }
+
+        if (count($analysisCols) > 0) {
+            $wantAnalysis = [
+                'telegram_user_id' => 'BIGINT NOT NULL',
+                'match_id' => 'BIGINT UNSIGNED NOT NULL',
+                'bet_message_id' => 'BIGINT UNSIGNED NULL',
+                'provider' => 'VARCHAR(32) NOT NULL DEFAULT \'gemini\'',
+                'model_name' => 'VARCHAR(128) NULL',
+                'status' => 'ENUM(\'pending\', \'completed\', \'failed\') NOT NULL DEFAULT \'pending\'',
+                'cost_charged' => 'INT NOT NULL DEFAULT 0',
+                'prompt_text' => 'LONGTEXT NOT NULL',
+                'response_text' => 'LONGTEXT NULL',
+                'error_text' => 'TEXT NULL',
+                'created_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP',
+                'updated_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+            ];
+
+            $addAnalysis = [];
+            foreach ($wantAnalysis as $name => $typeSql) {
+                if (!isset($analysisCols[$name])) {
+                    $addAnalysis[] = 'ADD COLUMN `' . $name . '` ' . $typeSql;
+                }
+            }
+            if ($addAnalysis !== []) {
+                $pdo->exec('ALTER TABLE `ai_analysis_requests` ' . implode(', ', $addAnalysis));
+            }
+
+            try {
+                $pdo->exec('ALTER TABLE `ai_analysis_requests` ADD UNIQUE KEY `uniq_ai_user_match` (`telegram_user_id`, `match_id`)');
+            } catch (PDOException) {
+                // already exists
+            }
+            try {
+                $pdo->exec('ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_match_id` (`match_id`)');
+            } catch (PDOException) {
+                // already exists
+            }
+            try {
+                $pdo->exec('ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_status` (`status`)');
+            } catch (PDOException) {
+                // already exists
+            }
+        }
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS `gemini_api_keys` ('
+            . '  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,'
+            . '  `api_key` VARCHAR(255) NOT NULL,'
+            . '  `is_active` TINYINT(1) NOT NULL DEFAULT 1,'
+            . '  `last_error` TEXT NULL,'
+            . '  `fail_count` INT NOT NULL DEFAULT 0,'
+            . '  `last_used_at` DATETIME NULL,'
+            . '  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,'
+            . '  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,'
+            . '  PRIMARY KEY (`id`),'
+            . '  UNIQUE KEY `uniq_gemini_api_key` (`api_key`),'
+            . '  KEY `idx_gemini_keys_active` (`is_active`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $geminiKeyCols = array_flip(self::getTableColumns($pdo, 'gemini_api_keys'));
+        if (count($geminiKeyCols) > 0 && !isset($geminiKeyCols['id'])) {
+            throw new \RuntimeException('Invalid schema: gemini_api_keys.id column is missing');
+        }
+
+        if (count($geminiKeyCols) > 0) {
+            $wantGeminiKeys = [
+                'api_key' => 'VARCHAR(255) NOT NULL',
+                'is_active' => 'TINYINT(1) NOT NULL DEFAULT 1',
+                'last_error' => 'TEXT NULL',
+                'fail_count' => 'INT NOT NULL DEFAULT 0',
+                'last_used_at' => 'DATETIME NULL',
+                'created_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP',
+                'updated_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+            ];
+
+            $addGeminiKeys = [];
+            foreach ($wantGeminiKeys as $name => $typeSql) {
+                if (!isset($geminiKeyCols[$name])) {
+                    $addGeminiKeys[] = 'ADD COLUMN `' . $name . '` ' . $typeSql;
+                }
+            }
+            if ($addGeminiKeys !== []) {
+                $pdo->exec('ALTER TABLE `gemini_api_keys` ' . implode(', ', $addGeminiKeys));
+            }
+
+            try {
+                $pdo->exec('ALTER TABLE `gemini_api_keys` ADD UNIQUE KEY `uniq_gemini_api_key` (`api_key`)');
+            } catch (PDOException) {
+                // already exists
+            }
+            try {
+                $pdo->exec('ALTER TABLE `gemini_api_keys` ADD KEY `idx_gemini_keys_active` (`is_active`)');
+            } catch (PDOException) {
+                // already exists
+            }
+        }
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS `gemini_models` ('
+            . '  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,'
+            . '  `model_name` VARCHAR(128) NOT NULL,'
+            . '  `is_active` TINYINT(1) NOT NULL DEFAULT 1,'
+            . '  `last_error` TEXT NULL,'
+            . '  `fail_count` INT NOT NULL DEFAULT 0,'
+            . '  `last_used_at` DATETIME NULL,'
+            . '  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,'
+            . '  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,'
+            . '  PRIMARY KEY (`id`),'
+            . '  UNIQUE KEY `uniq_gemini_model_name` (`model_name`),'
+            . '  KEY `idx_gemini_models_active` (`is_active`)'
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $geminiModelCols = array_flip(self::getTableColumns($pdo, 'gemini_models'));
+        if (count($geminiModelCols) > 0 && !isset($geminiModelCols['id'])) {
+            throw new \RuntimeException('Invalid schema: gemini_models.id column is missing');
+        }
+
+        if (count($geminiModelCols) > 0) {
+            $wantGeminiModels = [
+                'model_name' => 'VARCHAR(128) NOT NULL',
+                'is_active' => 'TINYINT(1) NOT NULL DEFAULT 1',
+                'last_error' => 'TEXT NULL',
+                'fail_count' => 'INT NOT NULL DEFAULT 0',
+                'last_used_at' => 'DATETIME NULL',
+                'created_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP',
+                'updated_at' => 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
+            ];
+
+            $addGeminiModels = [];
+            foreach ($wantGeminiModels as $name => $typeSql) {
+                if (!isset($geminiModelCols[$name])) {
+                    $addGeminiModels[] = 'ADD COLUMN `' . $name . '` ' . $typeSql;
+                }
+            }
+            if ($addGeminiModels !== []) {
+                $pdo->exec('ALTER TABLE `gemini_models` ' . implode(', ', $addGeminiModels));
+            }
+
+            try {
+                $pdo->exec('ALTER TABLE `gemini_models` ADD UNIQUE KEY `uniq_gemini_model_name` (`model_name`)');
+            } catch (PDOException) {
+                // already exists
+            }
+            try {
+                $pdo->exec('ALTER TABLE `gemini_models` ADD KEY `idx_gemini_models_active` (`is_active`)');
             } catch (PDOException) {
                 // already exists
             }
@@ -672,5 +926,17 @@ final class Db
         }
 
         return $cols;
+    }
+
+    private static function hasTableIndex(PDO $pdo, string $table, string $index): bool
+    {
+        $stmt = $pdo->prepare('SHOW INDEX FROM `' . str_replace('`', '``', $table) . '` WHERE `Key_name` = ?');
+        try {
+            $stmt->execute([$index]);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
     }
 }

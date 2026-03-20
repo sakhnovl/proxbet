@@ -75,6 +75,52 @@ final class DataExtractor
     }
 
     /**
+     * Extract data for algorithm 2.
+     *
+     * @param array<string,mixed> $match
+     * @return array{
+     *   home_win_odd:float,
+     *   over_25_odd:float|null,
+     *   total_line:float|null,
+     *   over_25_odd_check_skipped:bool,
+     *   home_first_half_goals_in_last_5:int,
+     *   h2h_first_half_goals_in_last_5:int,
+     *   has_data:bool
+     * }
+     */
+    public function extractAlgorithmTwoData(array $match): array
+    {
+        $homeWinOdd = $this->getFloatOrNull($match, 'home_cf');
+        $over25Odd = null;
+        $over25OddCheckSkipped = false;
+
+        $totalLine = $this->getFloatOrNull($match, 'total_line');
+        if ($totalLine !== null && abs($totalLine - 2.5) < 0.001) {
+            $over25Odd = $this->getFloatOrNull($match, 'total_line_tb');
+        } elseif ($totalLine !== null && $totalLine > 2.5) {
+            $over25OddCheckSkipped = true;
+        }
+
+        $homeFirstHalfGoals = $this->getIntOrNull($match, 'ht_match_goals_1');
+        $h2hFirstHalfGoals = $this->extractH2hAnyFirstHalfGoalMatches($match);
+
+        $hasData = $homeWinOdd !== null
+            && ($over25Odd !== null || $over25OddCheckSkipped)
+            && $homeFirstHalfGoals !== null
+            && $h2hFirstHalfGoals !== null;
+
+        return [
+            'home_win_odd' => $homeWinOdd ?? 0.0,
+            'over_25_odd' => $over25Odd,
+            'total_line' => $totalLine,
+            'over_25_odd_check_skipped' => $over25OddCheckSkipped,
+            'home_first_half_goals_in_last_5' => $homeFirstHalfGoals ?? 0,
+            'h2h_first_half_goals_in_last_5' => $h2hFirstHalfGoals ?? 0,
+            'has_data' => $hasData,
+        ];
+    }
+
+    /**
      * Extract live statistics from match record.
      *
      * @param array<string,mixed> $match
@@ -166,19 +212,81 @@ final class DataExtractor
      */
     private function getFloatOrZero(array $data, string $key): float
     {
+        return $this->getFloatOrNull($data, $key) ?? 0.0;
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    private function getFloatOrNull(array $data, string $key): ?float
+    {
         if (!array_key_exists($key, $data)) {
-            return 0.0;
+            return null;
         }
 
         $val = $data[$key];
         if ($val === null) {
-            return 0.0;
+            return null;
         }
 
         if (is_numeric($val)) {
             return (float) $val;
         }
 
-        return 0.0;
+        return null;
+    }
+
+    /**
+     * Count H2H matches from the last 5 where any team scored in the first half.
+     *
+     * @param array<string,mixed> $match
+     */
+    private function extractH2hAnyFirstHalfGoalMatches(array $match): ?int
+    {
+        $sgiJson = $match['sgi_json'] ?? null;
+        if (!is_string($sgiJson) || trim($sgiJson) === '') {
+            return null;
+        }
+
+        $decoded = json_decode($sgiJson, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        $h2hList = $decoded['G'] ?? (($decoded['Q']['G'] ?? null));
+        if (!is_array($h2hList)) {
+            return null;
+        }
+
+        $count = 0;
+        $considered = 0;
+
+        foreach (array_slice(array_values($h2hList), 0, 5) as $h2hMatch) {
+            if (!is_array($h2hMatch)) {
+                continue;
+            }
+
+            $firstHalf = $h2hMatch['P'][0] ?? null;
+            if (!is_array($firstHalf)) {
+                continue;
+            }
+
+            $homeGoals = $firstHalf['H'] ?? null;
+            $awayGoals = $firstHalf['A'] ?? null;
+            if (!is_numeric($homeGoals) || !is_numeric($awayGoals)) {
+                continue;
+            }
+
+            $considered++;
+            if (((int) $homeGoals + (int) $awayGoals) > 0) {
+                $count++;
+            }
+        }
+
+        if ($considered === 0) {
+            return null;
+        }
+
+        return $count;
     }
 }

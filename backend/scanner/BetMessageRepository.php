@@ -25,16 +25,25 @@ final class BetMessageRepository
      * @param int $messageId Telegram message ID
      * @param string $chatId Telegram chat ID
      * @param string $messageText Full message text
+     * @param int $algorithmId Scanner algorithm identifier
+     * @param string $algorithmName Scanner algorithm label
      * @return int Inserted bet message ID
      */
-    public function saveBetMessage(int $matchId, int $messageId, string $chatId, string $messageText): int
+    public function saveBetMessage(
+        int $matchId,
+        int $messageId,
+        string $chatId,
+        string $messageText,
+        int $algorithmId,
+        string $algorithmName
+    ): int
     {
         try {
             $stmt = $this->pdo->prepare(
-                'INSERT INTO `bet_messages` (`match_id`, `message_id`, `chat_id`, `message_text`, `bet_status`) '
-                . 'VALUES (?, ?, ?, ?, ?)'
+                'INSERT INTO `bet_messages` (`match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `bet_status`) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?)'
             );
-            $stmt->execute([$matchId, $messageId, $chatId, $messageText, 'pending']);
+            $stmt->execute([$matchId, $messageId, $chatId, $messageText, $algorithmId, $algorithmName, 'pending']);
 
             $id = (int) $this->pdo->lastInsertId();
 
@@ -42,6 +51,7 @@ final class BetMessageRepository
                 'bet_message_id' => $id,
                 'match_id' => $matchId,
                 'message_id' => $messageId,
+                'algorithm_id' => $algorithmId,
             ]);
 
             return $id;
@@ -49,6 +59,7 @@ final class BetMessageRepository
             Logger::error('Failed to save bet message', [
                 'match_id' => $matchId,
                 'message_id' => $messageId,
+                'algorithm_id' => $algorithmId,
                 'error' => $e->getMessage(),
             ]);
             throw $e;
@@ -70,6 +81,8 @@ final class BetMessageRepository
                 . 'bm.`message_id`, '
                 . 'bm.`chat_id`, '
                 . 'bm.`message_text`, '
+                . 'bm.`algorithm_id`, '
+                . 'bm.`algorithm_name`, '
                 . 'bm.`bet_status`, '
                 . 'bm.`sent_at`, '
                 . 'm.`time`, '
@@ -144,7 +157,7 @@ final class BetMessageRepository
     {
         try {
             $stmt = $this->pdo->prepare(
-                'SELECT `id`, `match_id`, `message_id`, `chat_id`, `message_text`, `bet_status`, `sent_at`, `checked_at` '
+                'SELECT `id`, `match_id`, `message_id`, `chat_id`, `message_text`, `algorithm_id`, `algorithm_name`, `bet_status`, `sent_at`, `checked_at` '
                 . 'FROM `bet_messages` '
                 . 'WHERE `match_id` = ? '
                 . 'ORDER BY `sent_at` DESC '

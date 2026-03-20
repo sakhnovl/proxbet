@@ -83,11 +83,11 @@ function tgEditMessage(string $apiBase, int $chatId, int $messageId, string $tex
     }
 }
 
-function tgAnswerCallback(string $apiBase, string $callbackQueryId, string $text = ''): void
+function tgAnswerCallback(string $apiBase, string $callbackQueryId, string $text = '', bool $showAlert = false): void
 {
     tgRequest($apiBase, 'answerCallbackQuery', [
         'callback_query_id' => $callbackQueryId,
         'text' => $text,
-        'show_alert' => false,
+        'show_alert' => $showAlert,
     ]);
 }

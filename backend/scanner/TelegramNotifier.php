@@ -7,6 +7,7 @@ namespace Proxbet\Scanner;
 use Proxbet\Line\Logger;
 
 require_once __DIR__ . '/../bans/tg_api.php';
+require_once __DIR__ . '/../telegram/public_handlers.php';
 
 /**
  * Sends scanner signals to Telegram with duplicate prevention.
@@ -20,10 +21,6 @@ final class TelegramNotifier
     private array $sentMatches = [];
     private ?BetMessageRepository $repository;
 
-    /**
-     * @param string $channelId Telegram channel ID (e.g., -1003156000817)
-     * @param BetMessageRepository|null $repository Repository for saving bet messages
-     */
     public function __construct(string $token, string $channelId, string $statePath, ?BetMessageRepository $repository = null)
     {
         $this->apiBase = 'https://api.telegram.org/bot' . $token;
@@ -34,18 +31,18 @@ final class TelegramNotifier
     }
 
     /**
-     * Send notification for a match signal.
-     *
      * @param array<string,mixed> $match
      */
     public function notifySignal(array $match): void
     {
         $matchId = (int) ($match['match_id'] ?? 0);
+        $algorithmId = (int) ($match['algorithm_id'] ?? 1);
         $key = $this->getMatchKey($match);
 
         if (isset($this->sentMatches[$key])) {
             Logger::info('Scanner notification skipped (already sent)', [
                 'match_id' => $matchId,
+                'algorithm_id' => $algorithmId,
                 'key' => $key,
             ]);
             return;
@@ -61,6 +58,16 @@ final class TelegramNotifier
                 'text' => $message,
                 'parse_mode' => 'HTML',
                 'disable_web_page_preview' => true,
+                'reply_markup' => [
+                    'inline_keyboard' => [
+                        [
+                            [
+                                'text' => getAnalysisButtonText(),
+                                'callback_data' => analysisCallbackData($matchId, $algorithmId),
+                            ],
+                        ],
+                    ],
+                ],
             ]);
 
             if ($resp['ok'] ?? false) {
@@ -68,12 +75,14 @@ final class TelegramNotifier
                 $messageId = (int) ($resp['result']['message_id'] ?? 0);
                 Logger::info('Scanner notification sent to channel', [
                     'match_id' => $matchId,
+                    'algorithm_id' => $algorithmId,
                     'channel_id' => $this->channelId,
                     'message_id' => $messageId,
                 ]);
             } else {
                 Logger::error('Scanner notification failed', [
                     'match_id' => $matchId,
+                    'algorithm_id' => $algorithmId,
                     'channel_id' => $this->channelId,
                     'response' => $resp,
                 ]);
@@ -81,6 +90,7 @@ final class TelegramNotifier
         } catch (\Throwable $e) {
             Logger::error('Scanner notification exception', [
                 'match_id' => $matchId,
+                'algorithm_id' => $algorithmId,
                 'channel_id' => $this->channelId,
                 'error' => $e->getMessage(),
             ]);
@@ -90,19 +100,21 @@ final class TelegramNotifier
             $this->sentMatches[$key] = true;
             $this->saveSentMatches();
 
-            // Save message to database if repository is available
             if ($this->repository !== null && $messageId > 0) {
                 try {
                     $this->repository->saveBetMessage(
                         $matchId,
                         $messageId,
                         $this->channelId,
-                        $message
+                        $message,
+                        $algorithmId,
+                        (string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId))
                     );
                 } catch (\Throwable $e) {
                     Logger::error('Failed to save bet message to database', [
                         'match_id' => $matchId,
                         'message_id' => $messageId,
+                        'algorithm_id' => $algorithmId,
                         'error' => $e->getMessage(),
                     ]);
                 }
@@ -111,38 +123,32 @@ final class TelegramNotifier
     }
 
     /**
-     * Generate unique key for match to prevent duplicates.
-     * Each match is sent only once, regardless of minute changes.
-     *
      * @param array<string,mixed> $match
      */
     private function getMatchKey(array $match): string
     {
         $matchId = (int) ($match['match_id'] ?? 0);
+        $algorithmId = (int) ($match['algorithm_id'] ?? 1);
 
-        return sprintf('match_%d', $matchId);
+        return sprintf('match_%d_algorithm_%d', $matchId, $algorithmId);
     }
 
     /**
-     * Format match data as Telegram message.
-     *
      * @param array<string,mixed> $match
      */
     private function formatMessage(array $match): string
     {
-        $probability = sprintf('%.0f%%', ($match['probability'] ?? 0) * 100);
+        $algorithmId = (int) ($match['algorithm_id'] ?? 1);
+        $algorithmName = htmlspecialchars((string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId)), ENT_QUOTES, 'UTF-8');
         $home = htmlspecialchars((string) ($match['home'] ?? ''), ENT_QUOTES, 'UTF-8');
         $away = htmlspecialchars((string) ($match['away'] ?? ''), ENT_QUOTES, 'UTF-8');
         $liga = htmlspecialchars((string) ($match['liga'] ?? ''), ENT_QUOTES, 'UTF-8');
         $time = htmlspecialchars((string) ($match['time'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
 
         $scoreHome = (int) ($match['score_home'] ?? 0);
         $scoreAway = (int) ($match['score_away'] ?? 0);
         $score = sprintf('%d:%d', $scoreHome, $scoreAway);
-
-        $formScore = sprintf('%.2f', $match['form_score'] ?? 0);
-        $h2hScore = sprintf('%.2f', $match['h2h_score'] ?? 0);
-        $liveScore = sprintf('%.2f', $match['live_score'] ?? 0);
 
         $stats = $match['stats'] ?? [];
         $shotsTotal = (int) ($stats['shots_total'] ?? 0);
@@ -158,29 +164,58 @@ final class TelegramNotifier
         $homeH2hGoals = (int) ($h2hData['home_goals'] ?? 0);
         $awayH2hGoals = (int) ($h2hData['away_goals'] ?? 0);
 
-        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $header = "🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>\n";
+        $header .= "🧠 <b>{$algorithmName}</b>\n\n";
+        $header .= "⚽ <b>{$home} - {$away}</b>\n";
+        $header .= "🏆 {$liga}\n";
+        $header .= "⏱ Время: <b>{$time}</b>\n";
+        $header .= "⚽ Счёт: <b>{$score}</b>\n\n";
 
-        return "🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>\n\n"
-            . "⚽ <b>{$home} - {$away}</b>\n"
-            . "🏆 {$liga}\n"
-            . "⏱ Время: <b>{$time}</b>\n"
-            . "⚽ Счет: <b>{$score}</b>\n\n"
+        $statsBlock = "📈 <b>Статистика матча:</b>\n";
+        $statsBlock .= "├ Удары: {$shotsTotal} (в створ: {$shotsOnTarget})\n";
+        $statsBlock .= "├ Опасные атаки: {$dangerAttacks}\n";
+        $statsBlock .= "└ Угловые: {$corners}\n\n";
+
+        if ($algorithmId === 2) {
+            $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+            $homeWinOdd = isset($algorithmData['home_win_odd']) ? sprintf('%.2f', (float) $algorithmData['home_win_odd']) : '-';
+            $totalLine = isset($algorithmData['total_line']) && $algorithmData['total_line'] !== null
+                ? sprintf('%.2f', (float) $algorithmData['total_line'])
+                : '-';
+            $over25Odd = isset($algorithmData['over_25_odd']) && $algorithmData['over_25_odd'] !== null
+                ? sprintf('%.2f', (float) $algorithmData['over_25_odd'])
+                : '-';
+            $over25Text = !empty($algorithmData['over_25_odd_check_skipped'])
+                ? "линия {$totalLine} > 2.5, проверка пропущена"
+                : $over25Odd;
+            $homeFirstHalfGoals = (int) ($algorithmData['home_first_half_goals_in_last_5'] ?? 0);
+            $h2hFirstHalfGoals = (int) ($algorithmData['h2h_first_half_goals_in_last_5'] ?? 0);
+
+            return $header
+                . "📌 \n"
+                . "├ ТБ 2.5: {$over25Text}\n"
+                . "├ Хозяева забивали в 1T: {$homeFirstHalfGoals}/5\n"
+                . "└ H2H с голом любой команды в 1T: {$h2hFirstHalfGoals}/5\n\n"
+                . $statsBlock
+                . "📋 <b>Форма 1T:</b> дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
+                . "🤝 <b>H2H 1T:</b> дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
+        }
+
+        $probability = sprintf('%.0f%%', ((float) ($match['probability'] ?? 0)) * 100);
+        $formScore = sprintf('%.2f', (float) ($match['form_score'] ?? 0));
+        $h2hScore = sprintf('%.2f', (float) ($match['h2h_score'] ?? 0));
+        $liveScore = sprintf('%.2f', (float) ($match['live_score'] ?? 0));
+
+        return $header
             . "📊 <b>Вероятность: {$probability}</b>\n"
             . "├ Форма: {$formScore} (40%)\n"
             . "├ H2H: {$h2hScore} (20%)\n"
             . "└ Live: {$liveScore} (40%)\n\n"
-            . "📈 <b>Статистика матча:</b>\n"
-            . "├ Удары: {$shotsTotal} (в створ: {$shotsOnTarget})\n"
-            . "├ Опасные атаки: {$dangerAttacks}\n"
-            . "└ Угловые: {$corners}\n\n"
+            . $statsBlock
             . "📋 <b>Форма 1T:</b> дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
-            . "🤝 <b>H2H 1T:</b> дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n\n"
-            . "✅ {$reason}";
+            . "🤝 <b>H2H 1T:</b> дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
     }
 
-    /**
-     * Load sent matches from state file.
-     */
     private function loadSentMatches(): void
     {
         if (!file_exists($this->statePath)) {
@@ -204,13 +239,10 @@ final class TelegramNotifier
         $this->cleanOldEntries();
     }
 
-    /**
-     * Save sent matches to state file.
-     */
     private function saveSentMatches(): void
     {
         $data = ['sent_matches' => $this->sentMatches];
-        $json = json_encode($data, JSON_PRETTY_PRINT);
+        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
         if ($json === false) {
             Logger::error('Failed to encode scanner state');
@@ -223,9 +255,6 @@ final class TelegramNotifier
         }
     }
 
-    /**
-     * Remove entries older than 2 hours to prevent state file growth.
-     */
     private function cleanOldEntries(): void
     {
         if (count($this->sentMatches) > 1000) {
@@ -246,8 +275,13 @@ final class TelegramNotifier
                 continue;
             }
 
+            if (preg_match('/^match_(\d+)_algorithm_(\d+)$/', $key, $matches) === 1) {
+                $normalized['match_' . $matches[1] . '_algorithm_' . $matches[2]] = true;
+                continue;
+            }
+
             if (preg_match('/^match_(\d+)(?:_min_\d+)?$/', $key, $matches) === 1) {
-                $normalized['match_' . $matches[1]] = true;
+                $normalized['match_' . $matches[1] . '_algorithm_1'] = true;
                 continue;
             }
 

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Proxbet\Line\Db;
+use Proxbet\Telegram\TelegramAiRepository;
 
 function handleMessage(array $msg, array $ctx): void
 {
@@ -16,13 +17,17 @@ function handleMessage(array $msg, array $ctx): void
 
     $apiBase = (string) $ctx['apiBase'];
     $adminIds = (array) $ctx['adminIds'];
+    $from = is_array($msg['from'] ?? null) ? $msg['from'] : [];
+    $textTrim = trim($text);
+
+    if (tryHandlePublicCommand($from, $chatId, $textTrim, $ctx)) {
+        return;
+    }
 
     if (!isAdmin($fromId, $adminIds)) {
         tgSendMessage($apiBase, $chatId, 'Недостаточно прав.');
         return;
     }
-
-    $textTrim = trim($text);
 
     if (tryHandleWizardStep($fromId, $chatId, $textTrim, $ctx)) {
         return;
@@ -96,7 +101,7 @@ function tryHandleWizardStep(int $fromId, int $chatId, string $textTrim, array $
         saveState($statePath, $state);
 
         $row = Db::getBanById($db, $newId);
-        $textOut = "✅ Бан добавлен\n" . ($row ? formatBanRow($row) : ('#' . $newId));
+        $textOut = "Ban added\n" . ($row ? formatBanRow($row) : ('#' . $newId));
         tgSendMessage($apiBase, $chatId, $textOut, [
             'reply_markup' => json_encode(bansMenuKeyboard(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         ]);
@@ -113,9 +118,6 @@ function tryHandleWizardStep(int $fromId, int $chatId, string $textTrim, array $
             return true;
         }
 
-        // IMPORTANT: Db::updateBan() in this project expects full row payload.
-        // If we send only one field, other fields may be overwritten with NULL.
-        // Therefore we always send all 4 fields, taking unchanged values from draft.
         $ok = Db::updateBan($db, $banId, [
             'country' => $draft['country'] ?? null,
             'liga' => $draft['liga'] ?? null,
@@ -135,7 +137,7 @@ function tryHandleWizardStep(int $fromId, int $chatId, string $textTrim, array $
         saveState($statePath, $state);
 
         $row = Db::getBanById($db, $banId);
-        $textOut = "✅ Бан обновлён\n" . ($row ? formatBanRow($row) : ('#' . $banId));
+        $textOut = "Ban updated\n" . ($row ? formatBanRow($row) : ('#' . $banId));
         tgSendMessage($apiBase, $chatId, $textOut, [
             'reply_markup' => json_encode(bansMenuKeyboard(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         ]);
@@ -153,6 +155,69 @@ function tryHandleCommand(int $fromId, int $chatId, string $textTrim, array $ctx
     $statePath = (string) $ctx['statePath'];
     $db = $ctx['db'];
     $state =& $ctx['state'];
+    $repository = new TelegramAiRepository($db);
+
+    if (preg_match('/^\/grant_balance\s+(\d+)\s+(\d+)$/', $textTrim, $m)) {
+        $targetTelegramUserId = (int) $m[1];
+        $grantedAmount = (int) $m[2];
+        $user = $repository->grantBalance($targetTelegramUserId, $grantedAmount);
+
+        deliverPrivateMessage(
+            $apiBase,
+            $targetTelegramUserId,
+            "Вам начислено <b>{$grantedAmount}</b> кредитов.\n\n" . buildBalanceMessage($user),
+            false
+        );
+
+        tgSendMessage($apiBase, $chatId, "Баланс обновлён.\n" . buildBalanceMessage($user));
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_key_add\s+(.+)$/', $textTrim, $m)) {
+        $repository->addGeminiKey(trim($m[1]));
+        tgSendMessage($apiBase, $chatId, 'Gemini API key сохранён в базе.');
+        return true;
+    }
+
+    if ($textTrim === '/gemini_key_list') {
+        tgSendMessage($apiBase, $chatId, formatGeminiKeysList($repository->listGeminiKeys()));
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_key_on\s+(\d+)$/', $textTrim, $m)) {
+        $repository->setGeminiKeyActive((int) $m[1], true);
+        tgSendMessage($apiBase, $chatId, "Gemini key #{$m[1]} включён.");
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_key_off\s+(\d+)$/', $textTrim, $m)) {
+        $repository->setGeminiKeyActive((int) $m[1], false);
+        tgSendMessage($apiBase, $chatId, "Gemini key #{$m[1]} выключен.");
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_model_add\s+([A-Za-z0-9._:-]+)$/', $textTrim, $m)) {
+        $repository->addGeminiModel(trim($m[1]));
+        tgSendMessage($apiBase, $chatId, 'Gemini model сохранена в базе.');
+        return true;
+    }
+
+    if ($textTrim === '/gemini_model_list') {
+        tgSendMessage($apiBase, $chatId, formatGeminiModelsList($repository->listGeminiModels()));
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_model_on\s+(\d+)$/', $textTrim, $m)) {
+        $repository->setGeminiModelActive((int) $m[1], true);
+        tgSendMessage($apiBase, $chatId, "Gemini model #{$m[1]} включена.");
+        return true;
+    }
+
+    if (preg_match('/^\/gemini_model_off\s+(\d+)$/', $textTrim, $m)) {
+        $repository->setGeminiModelActive((int) $m[1], false);
+        tgSendMessage($apiBase, $chatId, "Gemini model #{$m[1]} выключена.");
+        return true;
+    }
 
     if (str_starts_with($textTrim, '/start')) {
         tgSendMessage($apiBase, $chatId, "Команды:\n/bans — управление банами");
@@ -169,7 +234,7 @@ function tryHandleCommand(int $fromId, int $chatId, string $textTrim, array $ctx
     if (str_starts_with($textTrim, '/bans_list')) {
         $page = Db::listBans($db, 10, 0);
         $rows = $page['rows'] ?? [];
-        $out = "📃 Bans (top 10)\n\n";
+        $out = "Bans (top 10)\n\n";
         foreach ($rows as $r) {
             $out .= formatBanRow($r) . "\n";
         }
@@ -226,8 +291,8 @@ function tryHandleCommand(int $fromId, int $chatId, string $textTrim, array $ctx
             'reply_markup' => json_encode([
                 'inline_keyboard' => [
                     [
-                        ['text' => '✅ Да', 'callback_data' => bansCbDelConfirm($banId)],
-                        ['text' => '❌ Нет', 'callback_data' => bansCbDelCancel($banId)],
+                        ['text' => 'Да', 'callback_data' => bansCbDelConfirm($banId)],
+                        ['text' => 'Нет', 'callback_data' => bansCbDelCancel($banId)],
                     ],
                 ],
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
