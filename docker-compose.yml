@@ -64,6 +64,8 @@ services:
       MYSQL_USER: ${DOCKER_DB_USER:-proxbet}
       MYSQL_PASSWORD: ${DOCKER_DB_PASS:-change_me_db_password}
       MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-change_me_root_password}
+    ports:
+      - "127.0.0.1:${DOCKER_DB_FORWARD_PORT:-3307}:3306"
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
@@ -72,6 +74,22 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      PMA_USER: ${DOCKER_DB_USER:-proxbet}
+      PMA_PASSWORD: ${DOCKER_DB_PASS:-change_me_db_password}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-change_me_root_password}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "127.0.0.1:${PHPMYADMIN_PORT:-8081}:80"
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
