@@ -1,0 +1,79 @@
+x-app-runtime: &app-runtime
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  image: proxbet-runtime:local
+
+services:
+  app:
+    <<: *app-runtime
+    env_file:
+      - .env
+    environment:
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_PORT: ${APP_PORT:-8080}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DOCKER_DB_NAME:-proxbet}
+      DB_USER: ${DOCKER_DB_USER:-proxbet}
+      DB_PASS: ${DOCKER_DB_PASS:-change_me_db_password}
+      TELEGRAM_BOT_STATE_PATH: /data/telegram_state.json
+      SCANNER_STATE_PATH: /data/scanner_state.json
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_data:/data
+    entrypoint: ["/usr/local/bin/proxbet/app-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/backend/healthz.php > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    image: proxbet-runtime:local
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DOCKER_DB_NAME:-proxbet}
+      DB_USER: ${DOCKER_DB_USER:-proxbet}
+      DB_PASS: ${DOCKER_DB_PASS:-change_me_db_password}
+      TELEGRAM_BOT_STATE_PATH: /data/telegram_state.json
+      SCANNER_STATE_PATH: /data/scanner_state.json
+      PYTHONUNBUFFERED: "1"
+      BACK_START_ARGS: ${BACK_START_ARGS:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_data:/data
+    entrypoint: ["/usr/local/bin/proxbet/worker-entrypoint.sh"]
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DOCKER_DB_NAME:-proxbet}
+      MYSQL_USER: ${DOCKER_DB_USER:-proxbet}
+      MYSQL_PASSWORD: ${DOCKER_DB_PASS:-change_me_db_password}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_DB_ROOT_PASSWORD:-change_me_root_password}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  db_data:
