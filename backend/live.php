@@ -2,14 +2,11 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/line/env.php';
-require_once __DIR__ . '/line/logger.php';
-require_once __DIR__ . '/line/db.php';
-require_once __DIR__ . '/live/service.php';
+require_once __DIR__ . '/bootstrap/autoload.php';
+require_once __DIR__ . '/bootstrap/runtime.php';
 
-use Proxbet\Line\Env;
-use Proxbet\Line\Logger;
 use Proxbet\Line\Db;
+use Proxbet\Line\Logger;
 use Proxbet\Live\LiveService;
 
 /**
@@ -38,7 +35,7 @@ function forceFinishStaleMatches(PDO $pdo): int
     return $stmt->rowCount();
 }
 
-Env::load(__DIR__ . '/../.env');
+proxbet_bootstrap_env();
 Logger::init();
 
 try {

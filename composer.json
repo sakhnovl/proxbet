@@ -1,0 +1,36 @@
+{
+  "name": "proxbet/proxbet",
+  "description": "PHP backend for football live scanning, statistics, Telegram automation and service APIs.",
+  "type": "project",
+  "require": {},
+  "require-dev": {
+    "phpunit/phpunit": "^10.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "Proxbet\\Core\\": "backend/core/",
+      "Proxbet\\Line\\": "backend/line/",
+      "Proxbet\\Live\\": "backend/live/",
+      "Proxbet\\Scanner\\": "backend/scanner/",
+      "Proxbet\\Statistic\\": "backend/statistic/",
+      "Proxbet\\Telegram\\": "backend/telegram/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Proxbet\\Line\\Tests\\": "backend/line/tests/",
+      "Proxbet\\Scanner\\Tests\\": "backend/scanner/tests/",
+      "Proxbet\\Statistic\\Tests\\": "backend/statistic/tests/",
+      "Proxbet\\Telegram\\Tests\\": "backend/telegram/tests/"
+    }
+  },
+  "scripts": {
+    "test:line": "phpunit -c backend/line/tests/phpunit.xml",
+    "test:scanner": "phpunit -c backend/scanner/tests/phpunit.xml",
+    "test:smoke": "@php scripts/smoke/cli_entrypoints.php",
+    "test:statistic": "phpunit -c backend/statistic/tests/phpunit.xml",
+    "test:telegram": "phpunit -c backend/telegram/tests/phpunit.xml"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

@@ -2,14 +2,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/../line/db.php';
-require_once __DIR__ . '/../line/logger.php';
-require_once __DIR__ . '/DataExtractor.php';
-require_once __DIR__ . '/ProbabilityCalculator.php';
-require_once __DIR__ . '/MatchFilter.php';
-require_once __DIR__ . '/Scanner.php';
-require_once __DIR__ . '/BetMessageRepository.php';
-require_once __DIR__ . '/TelegramNotifier.php';
+require_once __DIR__ . '/../bootstrap/autoload.php';
+require_once __DIR__ . '/../bootstrap/runtime.php';
 
 use Proxbet\Line\Db;
 use Proxbet\Line\Logger;
@@ -37,28 +31,8 @@ $minProbability = isset($options['min-probability']) ? (float) $options['min-pro
 $noTelegram = isset($options['no-telegram']);
 
 try {
-    $envFile = __DIR__ . '/../../.env';
-    if (file_exists($envFile)) {
-        $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if (is_array($lines)) {
-            foreach ($lines as $line) {
-                $line = trim($line);
-                if ($line === '' || str_starts_with($line, '#')) {
-                    continue;
-                }
-                if (str_contains($line, '=')) {
-                    [$key, $value] = explode('=', $line, 2);
-                    $key = trim($key);
-                    $value = trim($value);
-                    if ($key !== '' && !array_key_exists($key, $_ENV)) {
-                        putenv("$key=$value");
-                        $_ENV[$key] = $value;
-                    }
-                }
-            }
-        }
-    }
-
+    proxbet_bootstrap_env();
+    proxbet_require_env(['DB_HOST', 'DB_USER', 'DB_NAME']);
     $db = Db::connectFromEnv();
 
     $extractor = new DataExtractor($db);
@@ -72,7 +46,7 @@ try {
         $channelId = getenv('TELEGRAM_CHANNEL_ID') ?: '';
 
         if ($token !== '' && $channelId !== '') {
-            $statePath = getenv('SCANNER_STATE_PATH') ?: (__DIR__ . '/scanner_state.json');
+            $statePath = getenv('SCANNER_STATE_PATH') ?: (proxbet_root_dir() . '/data/scanner_state.json');
             $stateDir = dirname($statePath);
             if (!is_dir($stateDir)) {
                 @mkdir($stateDir, 0777, true);

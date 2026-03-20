@@ -179,7 +179,8 @@ TELEGRAM_CHANNEL_ID=@your_channel
 
 ## Дедупликация
 
-Состояние хранится в `scanner_state.json`.
+Состояние хранится в JSON-файле, путь к которому задается через `SCANNER_STATE_PATH`.
+Если переменная не задана, локальный fallback-сценарий использует `data/scanner_state.json` в корне проекта.
 
 Новый формат ключа:
 

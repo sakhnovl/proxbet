@@ -1,0 +1,166 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Proxbet\Telegram\Tests;
+
+use PHPUnit\Framework\TestCase;
+use Proxbet\Telegram\GeminiMatchAnalyzer;
+
+/**
+ * Тесты для GeminiMatchAnalyzer
+ * 
+ * Запуск: vendor/bin/phpunit backend/telegram/tests/GeminiMatchAnalyzerTest.php
+ */
+final class GeminiMatchAnalyzerTest extends TestCase
+{
+    private string $testApiKey = 'test_api_key_12345';
+
+    public function testConstructorSetsDefaults(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $this->assertInstanceOf(GeminiMatchAnalyzer::class, $analyzer);
+    }
+
+    public function testAnalyzeThrowsExceptionWhenApiKeyEmpty(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('GEMINI_API_KEY is not configured');
+
+        $analyzer = new GeminiMatchAnalyzer('');
+        $analyzer->analyze([]);
+    }
+
+    public function testBuildPromptForAlgorithmOne(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $context = [
+            'algorithm_id' => 1,
+            'home' => 'Команда А',
+            'away' => 'Команда Б',
+            'liga' => 'Премьер-лига',
+            'time' => '25:30',
+            'scanner_probability' => 75,
+            'scanner_bet' => 'yes',
+        ];
+
+        // Используем рефлексию для тестирования приватного метода
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('buildPrompt');
+        $method->setAccessible(true);
+
+        $prompt = $method->invoke($analyzer, $context);
+
+        $this->assertStringContainsString('Команда А', $prompt);
+        $this->assertStringContainsString('Команда Б', $prompt);
+        $this->assertStringContainsString('75%', $prompt);
+        $this->assertStringContainsString('Вердикт:', $prompt);
+    }
+
+    public function testBuildPromptForAlgorithmTwo(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $context = [
+            'algorithm_id' => 2,
+            'home' => 'Фаворит',
+            'away' => 'Аутсайдер',
+            'home_cf' => 1.5,
+            'scanner_bet' => 'yes',
+        ];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('buildPrompt');
+        $method->setAccessible(true);
+
+        $prompt = $method->invoke($analyzer, $context);
+
+        $this->assertStringContainsString('Алгоритм 2', $prompt);
+        $this->assertStringContainsString('фаворит', $prompt);
+    }
+
+    public function testBuildPromptForAlgorithmThree(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $context = [
+            'algorithm_id' => 3,
+            'home' => 'Команда 1',
+            'away' => 'Команда 2',
+            'scanner_algorithm_data' => [
+                'selected_team_name' => 'Команда 1',
+                'selected_team_target_bet' => 'ИТБ Команда 1 больше 0.5',
+            ],
+        ];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('buildPrompt');
+        $method->setAccessible(true);
+
+        $prompt = $method->invoke($analyzer, $context);
+
+        $this->assertStringContainsString('Алгоритм 3', $prompt);
+        $this->assertStringContainsString('ИТБ', $prompt);
+    }
+
+    public function testExtractTextFromValidResponse(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $decoded = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            ['text' => 'Вердикт: Подходит'],
+                            ['text' => 'Уверенность: 80%'],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('extractText');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($analyzer, $decoded);
+
+        $this->assertStringContainsString('Вердикт: Подходит', $result);
+        $this->assertStringContainsString('Уверенность: 80%', $result);
+    }
+
+    public function testExtractTextReturnsNullForInvalidResponse(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $decoded = ['invalid' => 'structure'];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('extractText');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($analyzer, $decoded);
+
+        $this->assertNull($result);
+    }
+
+    public function testAlignResponseWithScannerAdjustsConfidence(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $response = "Вердикт: Подходит\nУверенность: 50%\n\nПричины:\n- тест";
+        $context = [
+            'algorithm_id' => 1,
+            'scanner_probability' => 70,
+            'scanner_bet' => 'yes',
+            'scanner_reason' => 'Высокая вероятность',
+        ];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('alignResponseWithScanner');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($analyzer, $response, $context);
+
+        // Уверенность должна быть скорректирована ближе к 70%
+        $this->assertStringContainsString('Уверенность:', $result);
+        $this->assertStringContainsString('Синхронизация со сканером:', $result);
+        $this->assertStringContainsString('70%', $result);
+    }
+}

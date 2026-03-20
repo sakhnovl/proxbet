@@ -270,6 +270,16 @@ class Job:
                     self._running = False
 
 
+@dataclass(frozen=True)
+class RuntimeOptions:
+    once: bool
+    run_live: bool
+    run_scanner: bool
+    run_bet_checker: bool
+    run_parserstat: bool
+    run_bot: bool
+
+
 def job_live() -> None:
     run_php(LIVE_PHP, "live")
 
@@ -296,6 +306,100 @@ def job_parser_then_stat() -> None:
     run_php(STAT_PHP, f"stat(after parser exit {code})")
 
 
+class BackStartApp:
+    def __init__(self, options: RuntimeOptions):
+        self.options = options
+        self.php_bin = detect_php_bin()
+        self.stop_event = threading.Event()
+        self.long_procs: list[LongProcess] = []
+        self.watch_threads: list[threading.Thread] = []
+        self.jobs: list[Job] = []
+        self.job_threads: list[threading.Thread] = []
+
+    def run(self) -> int:
+        print(f"[{ts()}] [INFO] back_start: root={ROOT}", flush=True)
+        print(f"[{ts()}] [INFO] back_start: PHP_BIN={self.php_bin}", flush=True)
+
+        if self.options.once:
+            return self.run_once()
+
+        self.configure_processes()
+        self.configure_jobs()
+
+        if not self.jobs and not self.long_procs:
+            print(f"[{ts()}] [WARN] back_start: nothing enabled; exiting", flush=True)
+            return 0
+
+        self.start_processes()
+        self.start_jobs()
+
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            return self.stop()
+
+    def run_once(self) -> int:
+        job_minute_pipeline(
+            run_live=self.options.run_live,
+            run_scanner=self.options.run_scanner,
+            run_bet_checker=self.options.run_bet_checker,
+        )
+        if self.options.run_parserstat:
+            job_parser_then_stat()
+        return 0
+
+    def configure_processes(self) -> None:
+        if self.options.run_bot:
+            self.long_procs.append(LongProcess("telegram-bot", [self.php_bin, str(TELEGRAM_BOT_PHP)], cwd=ROOT))
+
+    def configure_jobs(self) -> None:
+        if self.options.run_live or self.options.run_scanner or self.options.run_bet_checker:
+            self.jobs.append(
+                Job(
+                    name="minute-pipeline-every-1m",
+                    interval_sec=60,
+                    target=lambda: job_minute_pipeline(
+                        run_live=self.options.run_live,
+                        run_scanner=self.options.run_scanner,
+                        run_bet_checker=self.options.run_bet_checker,
+                    ),
+                )
+            )
+        if self.options.run_parserstat:
+            self.jobs.append(Job(name="parser+stat-every-5m", interval_sec=300, target=job_parser_then_stat))
+
+    def start_processes(self) -> None:
+        for long_process in self.long_procs:
+            thread = threading.Thread(
+                target=long_process.watch_loop,
+                args=(self.stop_event,),
+                name=f"watch-{long_process.name}",
+                daemon=True,
+            )
+            thread.start()
+            self.watch_threads.append(thread)
+
+    def start_jobs(self) -> None:
+        for job in self.jobs:
+            thread = threading.Thread(target=job.tick, args=(self.stop_event,), name=job.name, daemon=True)
+            thread.start()
+            self.job_threads.append(thread)
+
+    def stop(self) -> int:
+        print(f"[{ts()}] [INFO] back_start: stopping...", flush=True)
+        self.stop_event.set()
+
+        for long_process in self.long_procs:
+            long_process.stop()
+
+        for thread in self.job_threads + self.watch_threads:
+            thread.join(timeout=5)
+
+        print(f"[{ts()}] [OK] back_start: stopped", flush=True)
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="back_start.py",
@@ -319,78 +423,16 @@ def main() -> int:
     parser.add_argument("--no-bot", action="store_true", help="Do not run backend/telegram_bot.php.")
 
     args = parser.parse_args()
+    options = RuntimeOptions(
+        once=args.once,
+        run_live=not args.no_live,
+        run_scanner=not args.no_scanner,
+        run_bet_checker=not args.no_bet_checker,
+        run_parserstat=not args.no_parserstat,
+        run_bot=not args.no_bot,
+    )
 
-    php_bin = detect_php_bin()
-    print(f"[{ts()}] [INFO] back_start: root={ROOT}", flush=True)
-    print(f"[{ts()}] [INFO] back_start: PHP_BIN={php_bin}", flush=True)
-
-    if args.once:
-        job_minute_pipeline(
-            run_live=not args.no_live,
-            run_scanner=not args.no_scanner,
-            run_bet_checker=not args.no_bet_checker,
-        )
-        if not args.no_parserstat:
-            job_parser_then_stat()
-        return 0
-
-    stop_event = threading.Event()
-
-    # Long-living background processes
-    long_procs: list[LongProcess] = []
-
-    if not args.no_bot:
-        long_procs.append(LongProcess("telegram-bot", [php_bin, str(TELEGRAM_BOT_PHP)], cwd=ROOT))
-
-    watch_threads: list[threading.Thread] = []
-    for lp in long_procs:
-        t = threading.Thread(target=lp.watch_loop, args=(stop_event,), name=f"watch-{lp.name}", daemon=True)
-        t.start()
-        watch_threads.append(t)
-
-    # Scheduled jobs
-    jobs: list[Job] = []
-    if not args.no_live or not args.no_scanner or not args.no_bet_checker:
-        jobs.append(
-            Job(
-                name="minute-pipeline-every-1m",
-                interval_sec=60,
-                target=lambda: job_minute_pipeline(
-                    run_live=not args.no_live,
-                    run_scanner=not args.no_scanner,
-                    run_bet_checker=not args.no_bet_checker,
-                ),
-            )
-        )
-    if not args.no_parserstat:
-        jobs.append(Job(name="parser+stat-every-5m", interval_sec=300, target=job_parser_then_stat))
-
-    job_threads: list[threading.Thread] = []
-    for j in jobs:
-        t = threading.Thread(target=j.tick, args=(stop_event,), name=j.name, daemon=True)
-        t.start()
-        job_threads.append(t)
-
-    if not jobs and not long_procs:
-        print(f"[{ts()}] [WARN] back_start: nothing enabled; exiting", flush=True)
-        return 0
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print(f"[{ts()}] [INFO] back_start: stopping...", flush=True)
-        stop_event.set()
-
-        # Stop long-living processes first
-        for lp in long_procs:
-            lp.stop()
-
-        for t in job_threads + watch_threads:
-            t.join(timeout=5)
-
-        print(f"[{ts()}] [OK] back_start: stopped", flush=True)
-        return 0
+    return BackStartApp(options).run()
 
 
 if __name__ == "__main__":

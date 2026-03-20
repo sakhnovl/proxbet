@@ -272,7 +272,8 @@
 
 - `match_<id>_algorithm_<algorithm_id>`
 
-Состояние хранится в JSON-файле `scanner_state.json`.
+Состояние хранится в JSON-файле, путь к которому задается через `SCANNER_STATE_PATH`.
+В Docker-окружении по умолчанию используется `/data/scanner_state.json` во внешнем volume.
 
 Есть миграционная нормализация старых ключей:
 
@@ -355,7 +356,9 @@
 
 Для банов сделан wizard/stateful-режим с inline-кнопками и хранением промежуточного состояния.
 
-Состояние бота хранится в `telegram_state.json` и содержит:
+Состояние бота хранится в JSON-файле, путь к которому задается через `TELEGRAM_BOT_STATE_PATH`.
+В Docker-окружении по умолчанию используется `/data/telegram_state.json` во внешнем volume.
+Файл содержит:
 
 - `last_update_id` для long polling;
 - per-user состояние wizard’ов для банов.
@@ -556,7 +559,7 @@ GitHub Actions:
   - логика матчинга банов.
 - `normalize.php`, `time.php`
   - вспомогательные функции нормализации и времени.
-- `test_extractFm1.php`
+- `scripts/dev/test_extractFm1.php`
   - локальный smoke test разбора фор.
 
 #### `backend/live/`
@@ -598,8 +601,8 @@ Live-подсистема.
   - фиксация исходов ставок.
 - `README.md`
   - локальная документация подсистемы scanner.
-- `scanner_state.json`
-  - runtime state дедупликации.
+- `scanner_state.json` / `SCANNER_STATE_PATH`
+  - runtime state дедупликации; в production должен жить в volume или ином ignored path.
 
 #### `backend/statistic/`
 
@@ -998,7 +1001,7 @@ php backend/bet_stats.php
 ### Локальный smoke test extractFm1
 
 ```bash
-php backend/line/test_extractFm1.php
+php scripts/dev/test_extractFm1.php
 ```
 
 ## HTTP API и URL’ы
@@ -1080,8 +1083,8 @@ GET /backend/admin/api.php?action=stats_overview&token=YOUR_ADMIN_PASSWORD
 
 - Нет web-frontend приложения на React/Vue/Next.
 - Нет отдельного mobile-клиента.
-- Нет `composer.json` и зависимости не оформлены как Composer-пакеты.
-- Нет набора PHPUnit-тестов.
+- Нет полноценного production dependency graph в Composer; `composer.json` пока используется как bootstrap для autoload и dev-инструментов.
+- Нет полного набора unit/regression-тестов для всех критичных сценариев; smoke-проверка CLI entrypoint уже добавлена, но глубокое покрытие пока есть только у частей `statistic` и `telegram`.
 - Нет миграций в отдельной папке; схема живет в коде `Db::ensureSchema()`.
 - Нет отдельного domain layer или framework уровня Laravel/Symfony.
 
@@ -1184,15 +1187,32 @@ http://localhost:8080/backend/healthz.php
 http://localhost:8080/backend/api.php?action=get_matches
 ```
 
+6. При необходимости прогнать локальные dev-проверки:
+
+```bash
+composer install
+composer test:scanner
+composer test:smoke
+composer test:statistic
+composer test:telegram
+```
+
 ### Без Docker
 
 Нужны:
 
 - PHP 8.1+ с `pdo_mysql`, `curl`, `mbstring`, `intl`;
 - MySQL/MariaDB;
+- Composer;
 - Python 3 для `back_start.py`.
 
-Дальше можно запускать отдельные entry point’ы вручную:
+Дальше стоит сначала установить dev-зависимости:
+
+```bash
+composer install
+```
+
+После этого можно запускать отдельные entry point’ы вручную:
 
 ```bash
 php backend/parser.php
@@ -1202,6 +1222,15 @@ php backend/scanner/ScannerCli.php --verbose
 php backend/bet_checker.php
 php backend/telegram_bot.php
 python back_start.py --once
+```
+
+Отдельно можно прогнать текущие PHPUnit-наборы:
+
+```bash
+composer test:smoke
+composer test:scanner
+composer test:statistic
+composer test:telegram
 ```
 
 ## Итог

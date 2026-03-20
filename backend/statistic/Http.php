@@ -9,8 +9,9 @@ require_once __DIR__ . '/../core/HttpClient.php';
 use Proxbet\Core\HttpClient;
 
 /**
- * @deprecated Use Proxbet\Core\HttpClient instead
- * Kept for backward compatibility
+ * @deprecated since version ht-v2, use Proxbet\Core\HttpClient instead
+ * This class will be removed in the next major version.
+ * Kept for backward compatibility only.
  */
 final class Http
 {

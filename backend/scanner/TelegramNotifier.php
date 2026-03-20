@@ -241,7 +241,7 @@ final class TelegramNotifier
         return $header
             . "⏸ Статус: <b>{$matchStatus}</b>\n"
             . "🎯 Команда: <b>{$selectedTeam}</b>\n"
-            . "💸 Ставка: <b>{$targetBet}</b>\n"
+            . "💰 Ставка: <b>{$targetBet}</b>\n"
             . "🧮 Сработавшее правило: <b>{$triggeredRule}</b>\n\n"
             . "📋 <b>Табличные показатели</b>\n"
             . "├ {$home}: игры {$homeGames}, забито {$homeGoals}, пропущено {$homeMissed}\n"
@@ -285,13 +285,10 @@ final class TelegramNotifier
         $shotsOnTarget = (int) ($stats['shots_on_target'] ?? 0);
         $dangerAttacks = (int) ($stats['dangerous_attacks'] ?? 0);
         $corners = (int) ($stats['corners'] ?? 0);
-        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
-
         return "📈 <b>Статистика матча</b>\n"
             . "├ Удары: {$shotsTotal} (в створ: {$shotsOnTarget})\n"
             . "├ Опасные атаки: {$dangerAttacks}\n"
-            . "├ Угловые: {$corners}\n"
-            . "└ Причина: {$reason}\n\n";
+            . "└ Угловые: {$corners}\n\n";
     }
 
     /**

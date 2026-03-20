@@ -22,27 +22,14 @@ declare(strict_types=1);
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
-$envPath = dirname(__DIR__, 2) . '/.env';
-$rootDir = dirname(__DIR__, 2);
+require_once __DIR__ . '/../bootstrap/autoload.php';
+require_once __DIR__ . '/../bootstrap/runtime.php';
+require_once __DIR__ . '/../cors.php';
 
-require_once $rootDir . '/backend/line/env.php';
-require_once $rootDir . '/backend/line/db.php';
-require_once $rootDir . '/backend/cors.php';
-require_once $rootDir . '/backend/statistic/Config.php';
-require_once $rootDir . '/backend/statistic/Http.php';
-require_once $rootDir . '/backend/statistic/EventsstatClient.php';
-require_once $rootDir . '/backend/statistic/StatisticRepository.php';
-require_once $rootDir . '/backend/statistic/TeamNameNormalizer.php';
-require_once $rootDir . '/backend/statistic/HtMetricsCalculator.php';
-require_once $rootDir . '/backend/statistic/TableMetricsCalculator.php';
-require_once $rootDir . '/backend/statistic/StatisticService.php';
-require_once $rootDir . '/backend/statistic/StatisticServiceFactory.php';
-
-use Proxbet\Line\Env;
 use Proxbet\Line\Db;
 use Proxbet\Statistic\StatisticServiceFactory;
 
-Env::load($envPath);
+proxbet_bootstrap_env();
 
 // ── CORS / Headers ─────────────────────────────────────────────────────────
 
@@ -95,10 +82,11 @@ function sanitizeLike(?string $value): ?string
 
 // ── Authentication ─────────────────────────────────────────────────────────
 
-$adminPassword = getenv('ADMIN_PASSWORD') ?: '';
-
-if ($adminPassword === '') {
-    jsonError('Server misconfiguration: ADMIN_PASSWORD not set.', 500);
+try {
+    proxbet_require_env(['ADMIN_PASSWORD', 'DB_HOST', 'DB_USER', 'DB_NAME']);
+    $adminPassword = (string) getenv('ADMIN_PASSWORD');
+} catch (Throwable $e) {
+    jsonError('Server misconfiguration: ' . $e->getMessage(), 500);
 }
 
 // Extract token from Authorization header or query string

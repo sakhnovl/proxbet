@@ -101,7 +101,7 @@ final class StatCli
             return 1;
         }
 
-        $htDetails = $htCalculator->calculateAll($decoded, $home, $away);
+        $htDetails = $htCalculator->calculate($decoded, $home, $away);
         $tableDetails = $tableCalculator->calculate($decoded, $home, $away);
         echo json_encode([
             'home' => $home,

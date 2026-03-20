@@ -2,30 +2,22 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/line/env.php';
-require_once __DIR__ . '/line/logger.php';
-require_once __DIR__ . '/line/http.php';
+require_once __DIR__ . '/bootstrap/autoload.php';
+require_once __DIR__ . '/bootstrap/runtime.php';
 require_once __DIR__ . '/line/extractMatches.php';
-require_once __DIR__ . '/line/db.php';
-require_once __DIR__ . '/line/BanMatcher.php';
 
-use Proxbet\Line\Env;
-use Proxbet\Line\Logger;
-use Proxbet\Line\Http;
-use Proxbet\Line\Db;
 use Proxbet\Line\BanMatcher;
+use Proxbet\Line\Db;
+use Proxbet\Line\Http;
+use Proxbet\Line\Logger;
 use function Proxbet\Line\extractMatches;
 
-Env::load(__DIR__ . '/../.env');
+proxbet_bootstrap_env();
 Logger::init();
 
-$apiUrl = getenv('API_URL') ?: '';
-if ($apiUrl === '') {
-    Logger::error('API_URL is not set in .env');
-    exit(1);
-}
-
 try {
+    proxbet_require_env(['API_URL']);
+    $apiUrl = (string) getenv('API_URL');
     $payload = Http::getJson($apiUrl);
 } catch (Throwable $e) {
     Logger::error('Failed to fetch API JSON', ['error' => $e->getMessage()]);

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/extractFm1.php';
+require_once __DIR__ . '/../../backend/line/extractFm1.php';
 
 use function Proxbet\Line\extractFm1;
 use function Proxbet\Line\extractFm1cf;

@@ -6,9 +6,14 @@ namespace Proxbet\Statistic;
 
 use PDO;
 use Proxbet\Line\Logger;
+use Proxbet\Statistic\Interfaces\StatisticServiceInterface;
 
-final class StatisticService
+final class StatisticService implements StatisticServiceInterface
 {
+    private const MAX_ERROR_LENGTH = 2000;
+    private const BATCH_SIZE_MIN = 1;
+    private const BATCH_SIZE_MAX = 1000;
+
     public function __construct(
         private Config $config,
         private EventsstatClient $client,
@@ -117,7 +122,7 @@ final class StatisticService
 
                 $htDetails = ($decoded === [] || $home === '' || $away === '')
                     ? ['metrics' => $this->getEmptyHtMetrics(), 'debug' => []]
-                    : $this->htCalculator->calculateAll($decoded, $home, $away);
+                    : $this->htCalculator->calculate($decoded, $home, $away);
                 $tableDetails = ($decoded === [] || $home === '' || $away === '')
                     ? ['metrics' => $this->getEmptyTableMetrics(), 'debug' => []]
                     : $this->tableCalculator->calculate($decoded, $home, $away);
@@ -323,7 +328,7 @@ final class StatisticService
 
     private function truncateError(string $message): string
     {
-        return mb_substr(trim($message), 0, 2000);
+        return mb_substr(trim($message), 0, self::MAX_ERROR_LENGTH);
     }
 
     /**

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Proxbet\Statistic;
 
-final class TableMetricsCalculator
+use Proxbet\Statistic\Interfaces\MetricsCalculatorInterface;
+
+final class TableMetricsCalculator implements MetricsCalculatorInterface
 {
     /**
      * @param array<string,mixed> $sgi

@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Proxbet\Statistic;
 
 use PDO;
+use Proxbet\Statistic\Interfaces\StatisticRepositoryInterface;
 
-final class StatisticRepository
+final class StatisticRepository implements StatisticRepositoryInterface
 {
     /**
      * Columns in `matches` that store calculated statistics.
@@ -59,9 +60,13 @@ final class StatisticRepository
     /**
      * @return array<int,array{match_id:int, sgi:string, home:string, away:string, sgi_json:?string}>
      */
+    private const BATCH_SIZE_MIN = 1;
+    private const BATCH_SIZE_MAX = 1000;
+    private const STALE_AFTER_MIN = 300;
+
     public function listMatchesToUpdate(int $limit, int $offset, bool $force, int $staleAfterSeconds, string $statsVersion, ?int $matchId = null): array
     {
-        $limit = max(1, min(1000, $limit));
+        $limit = max(self::BATCH_SIZE_MIN, min(self::BATCH_SIZE_MAX, $limit));
         $offset = max(0, $offset);
 
         $where = 'WHERE `sgi` IS NOT NULL AND `sgi` <> \'\'';
@@ -88,7 +93,7 @@ final class StatisticRepository
 
             $where .= ' AND (' . implode(' OR ', $parts) . ')';
             $params[':stats_version'] = $statsVersion;
-            $params[':stale_after'] = max(300, $staleAfterSeconds);
+            $params[':stale_after'] = max(self::STALE_AFTER_MIN, $staleAfterSeconds);
         }
 
         $sql = 'SELECT `id` AS match_id, `sgi`, `home`, `away`, `sgi_json` FROM `matches` '

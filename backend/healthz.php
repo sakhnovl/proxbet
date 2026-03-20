@@ -2,26 +2,39 @@
 
 declare(strict_types=1);
 
-$rootDir = dirname(__DIR__);
-
-require_once $rootDir . '/backend/line/env.php';
-require_once $rootDir . '/backend/line/db.php';
+require_once __DIR__ . '/bootstrap/autoload.php';
+require_once __DIR__ . '/bootstrap/runtime.php';
 
 use Proxbet\Line\Db;
-use Proxbet\Line\Env;
+use Proxbet\Line\SchemaBootstrap;
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
-Env::load($rootDir . '/.env');
+proxbet_bootstrap_env();
 
 try {
-    Db::connectFromEnv();
+    $pdo = Db::connectFromEnv();
+    $missingTables = [];
+
+    foreach (SchemaBootstrap::requiredTables() as $table) {
+        if (SchemaBootstrap::getTableColumns($pdo, $table) === []) {
+            $missingTables[] = $table;
+        }
+    }
+
+    if ($missingTables !== []) {
+        throw new RuntimeException('Missing required tables: ' . implode(', ', $missingTables));
+    }
 
     echo json_encode([
         'ok' => true,
         'service' => 'backend',
         'time' => date(DATE_ATOM),
+        'checks' => [
+            'database' => 'ok',
+            'schema' => 'ok',
+        ],
     ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $e) {
     http_response_code(503);
@@ -30,6 +43,9 @@ try {
         'ok' => false,
         'service' => 'backend',
         'error' => $e->getMessage(),
+        'checks' => [
+            'database' => 'error',
+            'schema' => 'error',
+        ],
     ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 }
-

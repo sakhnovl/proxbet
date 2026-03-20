@@ -130,6 +130,24 @@ final class DataExtractor
      *   shots_on_target:int,
      *   dangerous_attacks:int,
      *   corners:int,
+     *   shots_on_target_home:int,
+     *   shots_on_target_away:int,
+     *   shots_off_target_home:int,
+     *   shots_off_target_away:int,
+     *   dangerous_attacks_home:int,
+     *   dangerous_attacks_away:int,
+     *   corners_home:int,
+     *   corners_away:int,
+     *   xg_home:?float,
+     *   xg_away:?float,
+     *   yellow_cards_home:?int,
+     *   yellow_cards_away:?int,
+     *   trend_shots_total_delta:?int,
+     *   trend_shots_on_target_delta:?int,
+     *   trend_dangerous_attacks_delta:?int,
+     *   trend_xg_delta:?float,
+     *   trend_window_seconds:?int,
+     *   has_trend_data:bool,
      *   ht_hscore:int,
      *   ht_ascore:int,
      *   live_hscore:int,
@@ -143,21 +161,21 @@ final class DataExtractor
         $timeStr = (string) ($match['time'] ?? '00:00');
         $minute = $this->parseMinute($timeStr);
 
-        $shotsOnTargetHome = $this->getFloatOrZero($match, 'live_shots_on_target_home');
-        $shotsOnTargetAway = $this->getFloatOrZero($match, 'live_shots_on_target_away');
-        $shotsOffTargetHome = $this->getFloatOrZero($match, 'live_shots_off_target_home');
-        $shotsOffTargetAway = $this->getFloatOrZero($match, 'live_shots_off_target_away');
+        $shotsOnTargetHome = $this->getIntOrZero($match, 'live_shots_on_target_home');
+        $shotsOnTargetAway = $this->getIntOrZero($match, 'live_shots_on_target_away');
+        $shotsOffTargetHome = $this->getIntOrZero($match, 'live_shots_off_target_home');
+        $shotsOffTargetAway = $this->getIntOrZero($match, 'live_shots_off_target_away');
 
-        $shotsTotal = (int) ($shotsOnTargetHome + $shotsOnTargetAway + $shotsOffTargetHome + $shotsOffTargetAway);
-        $shotsOnTarget = (int) ($shotsOnTargetHome + $shotsOnTargetAway);
+        $shotsTotal = $shotsOnTargetHome + $shotsOnTargetAway + $shotsOffTargetHome + $shotsOffTargetAway;
+        $shotsOnTarget = $shotsOnTargetHome + $shotsOnTargetAway;
 
-        $dangerAttHome = $this->getFloatOrZero($match, 'live_danger_att_home');
-        $dangerAttAway = $this->getFloatOrZero($match, 'live_danger_att_away');
-        $dangerousAttacks = (int) ($dangerAttHome + $dangerAttAway);
+        $dangerAttHome = $this->getIntOrZero($match, 'live_danger_att_home');
+        $dangerAttAway = $this->getIntOrZero($match, 'live_danger_att_away');
+        $dangerousAttacks = $dangerAttHome + $dangerAttAway;
 
-        $cornerHome = $this->getFloatOrZero($match, 'live_corner_home');
-        $cornerAway = $this->getFloatOrZero($match, 'live_corner_away');
-        $corners = (int) ($cornerHome + $cornerAway);
+        $cornerHome = $this->getIntOrZero($match, 'live_corner_home');
+        $cornerAway = $this->getIntOrZero($match, 'live_corner_away');
+        $corners = $cornerHome + $cornerAway;
 
         $htHscore = $this->getIntOrZero($match, 'live_ht_hscore');
         $htAscore = $this->getIntOrZero($match, 'live_ht_ascore');
@@ -170,6 +188,24 @@ final class DataExtractor
             'shots_on_target' => $shotsOnTarget,
             'dangerous_attacks' => $dangerousAttacks,
             'corners' => $corners,
+            'shots_on_target_home' => $shotsOnTargetHome,
+            'shots_on_target_away' => $shotsOnTargetAway,
+            'shots_off_target_home' => $shotsOffTargetHome,
+            'shots_off_target_away' => $shotsOffTargetAway,
+            'dangerous_attacks_home' => $dangerAttHome,
+            'dangerous_attacks_away' => $dangerAttAway,
+            'corners_home' => $cornerHome,
+            'corners_away' => $cornerAway,
+            'xg_home' => $this->getFloatOrNull($match, 'live_xg_home'),
+            'xg_away' => $this->getFloatOrNull($match, 'live_xg_away'),
+            'yellow_cards_home' => $this->getIntOrNull($match, 'live_yellow_cards_home'),
+            'yellow_cards_away' => $this->getIntOrNull($match, 'live_yellow_cards_away'),
+            'trend_shots_total_delta' => $this->getIntOrNull($match, 'live_trend_shots_total_delta'),
+            'trend_shots_on_target_delta' => $this->getIntOrNull($match, 'live_trend_shots_on_target_delta'),
+            'trend_dangerous_attacks_delta' => $this->getIntOrNull($match, 'live_trend_danger_attacks_delta'),
+            'trend_xg_delta' => $this->getFloatOrNull($match, 'live_trend_xg_delta'),
+            'trend_window_seconds' => $this->getIntOrNull($match, 'live_trend_window_seconds'),
+            'has_trend_data' => $this->getIntOrZero($match, 'live_trend_has_data') === 1,
             'ht_hscore' => $htHscore,
             'ht_ascore' => $htAscore,
             'live_hscore' => $liveHscore,

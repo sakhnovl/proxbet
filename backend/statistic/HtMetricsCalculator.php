@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Proxbet\Statistic;
 
+use Proxbet\Statistic\Interfaces\MetricsCalculatorInterface;
+
 /**
  * Calculator for Half-Time (HT) metrics based on historical match data.
  *
@@ -11,7 +13,7 @@ namespace Proxbet\Statistic;
  * - Last 5 matches (Q data)
  * - Head-to-head last 5 matches (G data)
  */
-final class HtMetricsCalculator
+final class HtMetricsCalculator implements MetricsCalculatorInterface
 {
     /**
      * Calculate all HT metrics for a match.
@@ -19,9 +21,9 @@ final class HtMetricsCalculator
      * @param array<string,mixed> $sgi SGI JSON data
      * @param string $home Home team name
      * @param string $away Away team name
-     * @return array{metrics: array<string,int|float|null>, debug: array<string,array{considered:int,skipped:int}>}
+     * @return array{metrics: array<string,int|float|null>, debug: array<string,mixed>}
      */
-    public function calculateAll(array $sgi, string $home, string $away): array
+    public function calculate(array $sgi, string $home, string $away): array
     {
         $homeNorm = TeamNameNormalizer::normalize($home);
         $awayNorm = TeamNameNormalizer::normalize($away);

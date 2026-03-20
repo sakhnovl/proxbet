@@ -2,9 +2,8 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/line/env.php';
-require_once __DIR__ . '/line/logger.php';
-require_once __DIR__ . '/line/db.php';
+require_once __DIR__ . '/bootstrap/autoload.php';
+require_once __DIR__ . '/bootstrap/runtime.php';
 
 require_once __DIR__ . '/bans/tg_api.php';
 require_once __DIR__ . '/telegram/public_handlers.php';
@@ -18,57 +17,44 @@ require_once __DIR__ . '/bans/handlers_message.php';
 require_once __DIR__ . '/bans/handlers_callback.php';
 require_once __DIR__ . '/bans/router.php';
 
-use Proxbet\Line\Env;
-use Proxbet\Line\Logger;
 use Proxbet\Line\Db;
+use Proxbet\Line\Logger;
 
-Env::load(__DIR__ . '/../.env');
+proxbet_bootstrap_env();
 Logger::init();
 
-$token = getenv('TELEGRAM_BOT_TOKEN') ?: '';
-if ($token === '') {
-    Logger::error('TELEGRAM_BOT_TOKEN is not set in .env');
-    exit(1);
-}
-
-$adminIdsRaw = getenv('TELEGRAM_ADMIN_IDS') ?: '';
-if (trim($adminIdsRaw) === '') {
-    Logger::error('TELEGRAM_ADMIN_IDS is not set in .env (required)');
-    exit(1);
-}
-
-$adminIds = array_values(array_filter(array_map(
-    static fn($x) => (int) trim($x),
-    explode(',', $adminIdsRaw)
-), static fn($x) => $x > 0));
-
-if ($adminIds === []) {
-    Logger::error('TELEGRAM_ADMIN_IDS parsed empty (check format like 123,456)');
-    exit(1);
-}
-
-$apiBase = 'https://api.telegram.org/bot' . $token;
-$pollTimeout = (int) (getenv('TELEGRAM_POLL_TIMEOUT') ?: 25);
-$pollTimeout = max(5, min(50, $pollTimeout));
-
-$statePath = getenv('TELEGRAM_BOT_STATE_PATH') ?: (__DIR__ . '/telegram_state.json');
-$stateDir = dirname($statePath);
-if (!is_dir($stateDir)) {
-    @mkdir($stateDir, 0777, true);
-}
-
-Logger::info('Telegram bot started (long polling)', [
-    'poll_timeout' => $pollTimeout,
-    'admin_ids' => $adminIds,
-]);
-
-$state = loadState($statePath);
-$offset = (int) ($state['last_update_id'] ?? 0);
-
 try {
+    proxbet_require_env(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ADMIN_IDS', 'DB_HOST', 'DB_USER', 'DB_NAME']);
+
+    $token = (string) getenv('TELEGRAM_BOT_TOKEN');
+    $adminIdsRaw = (string) getenv('TELEGRAM_ADMIN_IDS');
+    $adminIds = array_values(array_filter(array_map(
+        static fn($x) => (int) trim($x),
+        explode(',', $adminIdsRaw)
+    ), static fn($x) => $x > 0));
+
+    if ($adminIds === []) {
+        throw new RuntimeException('TELEGRAM_ADMIN_IDS parsed empty (check format like 123,456)');
+    }
+
+    $apiBase = 'https://api.telegram.org/bot' . $token;
+    $pollTimeout = max(5, min(50, (int) (getenv('TELEGRAM_POLL_TIMEOUT') ?: 25)));
+    $statePath = getenv('TELEGRAM_BOT_STATE_PATH') ?: (proxbet_root_dir() . '/data/telegram_state.json');
+    $stateDir = dirname($statePath);
+    if (!is_dir($stateDir)) {
+        @mkdir($stateDir, 0777, true);
+    }
+
+    Logger::info('Telegram bot started (long polling)', [
+        'poll_timeout' => $pollTimeout,
+        'admin_ids' => $adminIds,
+    ]);
+
+    $state = loadState($statePath);
+    $offset = (int) ($state['last_update_id'] ?? 0);
     $db = Db::connectFromEnv();
 } catch (Throwable $e) {
-    Logger::error('DB connect failed for telegram bot', ['error' => $e->getMessage()]);
+    Logger::error('Telegram bot bootstrap failed', ['error' => $e->getMessage()]);
     exit(1);
 }
 
