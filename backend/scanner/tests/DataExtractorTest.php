@@ -231,7 +231,7 @@ final class DataExtractorTest extends TestCase
         $this->assertEquals(60, $result['minute']);
         $this->assertEquals(23, $result['shots_total']);
         $this->assertEquals(13, $result['shots_on_target']);
-        $this->assertEquals(3.4, $result['xg_total']);
+        $this->assertEqualsWithDelta(3.4, $result['xg_total'], 0.001);
         $this->assertEquals(2.75, $result['table_avg']);
     }
 

@@ -21,7 +21,7 @@ final class MatchFilter
     private const MAX_MINUTE = 30;
     private const ALGORITHM_THREE_RATIO_THRESHOLD = 1.1;
     private const ALGORITHM_THREE_MIN_GAMES = 10;
-    private const DEFAULT_MIN_PROBABILITY = 0.55;
+    private const DEFAULT_MIN_PROBABILITY = 0.65;
     private const MIN_DANGEROUS_ATTACKS = 20;
     private const MAX_HOME_WIN_ODD = 1.5;
     private const MAX_OVER_25_ODD = 1.5;

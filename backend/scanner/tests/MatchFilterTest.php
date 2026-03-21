@@ -35,7 +35,7 @@ final class MatchFilterTest extends TestCase
         );
 
         $this->assertFalse($decision['bet']);
-        $this->assertStringContainsString('РІРµСЂРѕСЏС‚РЅРѕСЃС‚СЊ', $decision['reason']);
+        $this->assertStringContainsString('вероятность', $decision['reason']);
     }
 
     public function testAlgorithmTwoSkipsOver25OddCheckWhenTotalLineIsAboveTwoPointFive(): void
@@ -91,7 +91,7 @@ final class MatchFilterTest extends TestCase
             'table_missed_2' => 38,
             'live_hscore' => 0,
             'live_ascore' => 0,
-            'match_status' => 'РџРµСЂРµСЂС‹РІ',
+            'match_status' => 'Перерыв',
             'home' => 'Home FC',
             'away' => 'Away FC',
             'has_data' => true,
@@ -116,7 +116,7 @@ final class MatchFilterTest extends TestCase
             'table_missed_2' => 38,
             'live_hscore' => 1,
             'live_ascore' => 0,
-            'match_status' => 'РџРµСЂРµСЂС‹РІ',
+            'match_status' => 'Перерыв',
             'home' => 'Home FC',
             'away' => 'Away FC',
             'has_data' => true,

@@ -625,18 +625,10 @@ final class ProbabilityCalculator
             return ['bet' => false, 'reason' => 'insufficient_shots_on_target'];
         }
         
-        // Check dangerous attacks tempo: dangerous_attacks / minute > 1.5
+        // Check dangerous attacks >= 20
         $dangerousAttacks = (int) ($liveData['dangerous_attacks'] ?? 0);
-        if ($minute > 0) {
-            $attackTempo = $dangerousAttacks / $minute;
-            if ($attackTempo <= 1.5) {
-                return ['bet' => false, 'reason' => 'insufficient_attack_tempo'];
-            }
-        } else {
-            // Fallback if minute is 0
-            if ($dangerousAttacks < 20) {
-                return ['bet' => false, 'reason' => 'insufficient_dangerous_attacks'];
-            }
+        if ($dangerousAttacks < 20) {
+            return ['bet' => false, 'reason' => 'insufficient_dangerous_attacks'];
         }
         
         // Check blocking red flags
@@ -648,7 +640,7 @@ final class ProbabilityCalculator
         }
         
         // Check probability threshold
-        if ($probability < 0.55) {
+        if ($probability < 0.65) {
             return ['bet' => false, 'reason' => 'probability_below_threshold'];
         }
         
