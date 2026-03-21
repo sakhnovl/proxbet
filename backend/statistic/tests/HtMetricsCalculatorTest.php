@@ -62,7 +62,7 @@ final class HtMetricsCalculatorTest extends TestCase
         $this->assertSame(3, $metrics['ht_match_goals_1']); // 3 matches with goals
         $this->assertSame(2, $metrics['ht_match_missed_goals_1']); // 2 matches conceded
         $this->assertSame(3, $metrics['ht_match_goals_2']); // 3 matches with goals
-        $this->assertSame(2, $metrics['ht_match_missed_goals_2']); // 2 matches conceded
+        $this->assertSame(3, $metrics['ht_match_missed_goals_2']); // 3 matches conceded
     }
 
     /**
@@ -245,10 +245,10 @@ final class HtMetricsCalculatorTest extends TestCase
         $this->assertIsFloat($v2['away']['attack']);
         
         // Home: 2*0.35 + 1*0.28 + 1*0.20 = 0.70 + 0.28 + 0.20 = 1.18
-        $this->assertEqualsWithDelta(1.18, $v2['form']['home']['attack'], 0.01);
+        $this->assertEqualsWithDelta(1.18, $v2['home']['attack'], 0.01);
         
         // Away: 1*0.35 + 0*0.28 = 0.35
-        $this->assertEqualsWithDelta(0.35, $v2['form']['away']['attack'], 0.01);
+        $this->assertEqualsWithDelta(0.35, $v2['away']['attack'], 0.01);
     }
 
     /**

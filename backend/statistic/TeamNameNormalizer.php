@@ -24,16 +24,11 @@ final class TeamNameNormalizer
             return '';
         }
 
-        $value = str_replace(
-            ["\u{00A0}", "\u{2018}", "\u{2019}", "\u{201B}", "\u{2032}", '`', 'ё', '‐', '‑', '‒', '–', '—', '−'],
-            [' ', "'", "'", "'", "'", "'", 'е', '-', '-', '-', '-', '-', '-'],
-            $value
-        );
-
-        $value = preg_replace("/[\"'.,()\\[\\]{}]+/u", ' ', $value) ?? $value;
-        $value = preg_replace('/\s*-\s*/u', '-', $value) ?? $value;
+        $value = str_replace(["\u{00A0}", 'ё'], [' ', 'е'], $value);
+        $value = preg_replace("/[\"'`’‘‛′.,()\\[\\]{}]+/u", '', $value) ?? $value;
+        $value = preg_replace('/[\p{Pd}\x{2212}]+/u', ' ', $value) ?? $value;
         $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
-        $value = trim($value, " \t\n\r\0\x0B-");
+        $value = trim($value);
 
         if ($value === '') {
             return '';

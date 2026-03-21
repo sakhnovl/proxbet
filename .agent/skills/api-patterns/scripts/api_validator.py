@@ -31,22 +31,8 @@ def find_api_files(project_path: Path) -> list:
     for pattern in patterns:
         files.extend(project_path.glob(pattern))
     
-    # Exclude dependencies/build artifacts and test files.
-    excluded_substrings = ["node_modules", ".git", "dist", "build", "__pycache__"]
-
-    def is_test_file(path: Path) -> bool:
-        normalized = str(path).replace("\\", "/").lower()
-        parts = set(normalized.split("/"))
-        if "test" in parts or "tests" in parts:
-            return True
-        name = path.name.lower()
-        return name.startswith("test_") or name.endswith("_test.py") or name.endswith("_test.ts") or name.endswith("_test.js")
-
-    return [
-        f
-        for f in files
-        if not any(x in str(f) for x in excluded_substrings) and not is_test_file(f)
-    ]
+    # Exclude node_modules, etc.
+    return [f for f in files if not any(x in str(f) for x in ['node_modules', '.git', 'dist', 'build', '__pycache__'])]
 
 def check_openapi_spec(file_path: Path) -> dict:
     """Check OpenAPI/Swagger specification."""

@@ -22,7 +22,7 @@ Antigravity Kit is a modular system consisting of:
 ├── agents/                  # 20 Specialist Agents
 ├── skills/                  # 36 Skills
 ├── workflows/               # 11 Slash Commands
-├── rules/                   # Global Rules (GEMINI.md, CODEX.md)
+├── rules/                   # Global Rules
 └── scripts/                 # Master Validation Scripts
 ```
 

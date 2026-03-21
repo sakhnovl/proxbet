@@ -16,7 +16,9 @@
                 "mcp"
             ]
         }
+        //other mcp servers
     }
 }
 
+// setup mcp server in  ~/.gemini\antigravity\mcp_config.json
 

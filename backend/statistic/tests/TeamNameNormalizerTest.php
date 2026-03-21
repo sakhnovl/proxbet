@@ -20,7 +20,7 @@ final class TeamNameNormalizerTest extends TestCase
     {
         $this->assertSame('manchester united', TeamNameNormalizer::normalize('Manchester  United'));
         $this->assertSame('real madrid', TeamNameNormalizer::normalize('Real-Madrid'));
-        $this->assertSame('psg', TeamNameNormalizer::normalize('P.S.G.'));
+        $this->assertSame('paris saint germain', TeamNameNormalizer::normalize('P.S.G.'));
     }
 
     public function testNormalizeAliases(): void
