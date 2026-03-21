@@ -11,9 +11,9 @@ final class MatchFilter
 {
     private const MIN_MINUTE = 15;
     private const MAX_MINUTE = 30;
-    private const ALGORITHM_THREE_RATIO_THRESHOLD = 1.5;
+    private const ALGORITHM_THREE_RATIO_THRESHOLD = 1.1;
     private const ALGORITHM_THREE_MIN_GAMES = 10;
-    private const DEFAULT_MIN_PROBABILITY = 0.65;
+    private const DEFAULT_MIN_PROBABILITY = 0.55;
     private const MIN_DANGEROUS_ATTACKS = 20;
     private const MAX_HOME_WIN_ODD = 1.5;
     private const MAX_OVER_25_ODD = 1.5;
@@ -350,10 +350,10 @@ final class MatchFilter
             $algorithmThreeData['table_games_1']
         );
 
-        $homeCandidate = $homeAttackRatio > self::ALGORITHM_THREE_RATIO_THRESHOLD
-            && $awayDefenseRatio > self::ALGORITHM_THREE_RATIO_THRESHOLD;
-        $awayCandidate = $awayAttackRatio > self::ALGORITHM_THREE_RATIO_THRESHOLD
-            && $homeDefenseRatio > self::ALGORITHM_THREE_RATIO_THRESHOLD;
+        $homeCandidate = $homeAttackRatio >= self::ALGORITHM_THREE_RATIO_THRESHOLD
+            && $awayDefenseRatio >= self::ALGORITHM_THREE_RATIO_THRESHOLD;
+        $awayCandidate = $awayAttackRatio >= self::ALGORITHM_THREE_RATIO_THRESHOLD
+            && $homeDefenseRatio >= self::ALGORITHM_THREE_RATIO_THRESHOLD;
 
         if (!$homeCandidate && !$awayCandidate) {
             return [

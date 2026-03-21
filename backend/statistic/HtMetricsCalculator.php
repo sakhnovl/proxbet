@@ -34,6 +34,11 @@ final class HtMetricsCalculator implements MetricsCalculatorInterface
         $homeH2h = $lists['h2h5'] === [] ? null : $this->calculateForTeam($lists['h2h5'], $homeNorm);
         $awayH2h = $lists['h2h5'] === [] ? null : $this->calculateForTeam($lists['h2h5'], $awayNorm);
 
+        // Calculate weighted form for Algorithm 1 v2
+        $homeWeighted = $lists['home_last5'] === [] ? null : $this->calculateWeightedForm($lists['home_last5'], $homeNorm);
+        $awayWeighted = $lists['away_last5'] === [] ? null : $this->calculateWeightedForm($lists['away_last5'], $awayNorm);
+        $weightedScore = $this->calculateWeightedFormScore($homeWeighted, $awayWeighted);
+
         $emptyDebug = ['considered' => 0, 'skipped' => 0];
 
         return [
@@ -82,6 +87,19 @@ final class HtMetricsCalculator implements MetricsCalculatorInterface
                     'home_normalized' => $homeNorm,
                     'away_normalized' => $awayNorm,
                 ],
+                'algorithm1_v2' => [
+                    'form' => [
+                        'home' => [
+                            'attack' => $homeWeighted['attack'] ?? null,
+                            'defense' => $homeWeighted['defense'] ?? null,
+                        ],
+                        'away' => [
+                            'attack' => $awayWeighted['attack'] ?? null,
+                            'defense' => $awayWeighted['defense'] ?? null,
+                        ],
+                        'weighted_score' => $weightedScore,
+                    ],
+                ],
             ],
         ];
     }
@@ -124,15 +142,18 @@ final class HtMetricsCalculator implements MetricsCalculatorInterface
     /**
      * Calculate metrics for a specific team across multiple matches.
      *
+     * IMPORTANT: match_goals represents the COUNT of matches where the team scored at least 1 goal
+     * in the first half (range: 0-5), NOT the total number of goals scored across all matches.
+     *
      * @param array<int,mixed> $matches
      * @return array{match_goals:int, match_missed_goals:int, goals_avg:float, missed_avg:float, considered:int, skipped:int}|null
      */
     private function calculateForTeam(array $matches, string $teamNorm): ?array
     {
-        $matchGoals = 0;
-        $matchMissedGoals = 0;
-        $sumGoals = 0;
-        $sumMissedGoals = 0;
+        $matchGoals = 0;  // Count of matches with at least 1 goal scored (0-5)
+        $matchMissedGoals = 0;  // Count of matches with at least 1 goal conceded (0-5)
+        $sumGoals = 0;  // Total goals scored across all matches
+        $sumMissedGoals = 0;  // Total goals conceded across all matches
         $considered = 0;
         $skipped = 0;
 
@@ -152,9 +173,11 @@ final class HtMetricsCalculator implements MetricsCalculatorInterface
             $sumGoals += $scores['team'];
             $sumMissedGoals += $scores['opp'];
 
+            // Increment match counter if team scored at least 1 goal in HT
             if ($scores['team'] > 0) {
                 $matchGoals++;
             }
+            // Increment match counter if team conceded at least 1 goal in HT
             if ($scores['opp'] > 0) {
                 $matchMissedGoals++;
             }
@@ -231,6 +254,83 @@ final class HtMetricsCalculator implements MetricsCalculatorInterface
         }
 
         return '';
+    }
+
+    /**
+     * Calculate weighted form metrics for Algorithm 1 v2.
+     *
+     * Uses exponential decay weights for last 5 matches:
+     * - Most recent: 0.35
+     * - 2nd: 0.28
+     * - 3rd: 0.20
+     * - 4th: 0.12
+     * - 5th: 0.05
+     *
+     * @param array<int,mixed> $matches
+     * @param string $teamNorm Normalized team name
+     * @return array{attack:float, defense:float, valid_matches:int}|null
+     */
+    private function calculateWeightedForm(array $matches, string $teamNorm): ?array
+    {
+        $weights = [0.35, 0.28, 0.20, 0.12, 0.05];
+        $attackSum = 0.0;
+        $defenseSum = 0.0;
+        $validMatches = 0;
+
+        foreach ($matches as $idx => $m) {
+            if ($idx >= 5) {
+                break; // Only process first 5 matches
+            }
+            if (!is_array($m)) {
+                continue;
+            }
+
+            $scores = $this->extractHtScores($m, $teamNorm);
+            if ($scores === null) {
+                continue;
+            }
+
+            $weight = $weights[$idx] ?? 0.0;
+            $attackSum += $scores['team'] * $weight;
+            $defenseSum += $scores['opp'] * $weight;
+            $validMatches++;
+        }
+
+        if ($validMatches === 0) {
+            return null;
+        }
+
+        return [
+            'attack' => $attackSum,
+            'defense' => $defenseSum,
+            'valid_matches' => $validMatches,
+        ];
+    }
+
+    /**
+     * Calculate weighted form score combining home and away metrics.
+     *
+     * Formula from Algorithm 1 v2 spec:
+     * (home_attack * 0.6 + away_defense * 0.4 + away_attack * 0.6 + home_defense * 0.4) / 2
+     *
+     * @param array{attack:float, defense:float, valid_matches:int}|null $homeForm
+     * @param array{attack:float, defense:float, valid_matches:int}|null $awayForm
+     * @return float|null
+     */
+    private function calculateWeightedFormScore(?array $homeForm, ?array $awayForm): ?float
+    {
+        if ($homeForm === null || $awayForm === null) {
+            return null;
+        }
+
+        $score = (
+            $homeForm['attack'] * 0.6 +
+            $awayForm['defense'] * 0.4 +
+            $awayForm['attack'] * 0.6 +
+            $homeForm['defense'] * 0.4
+        ) / 2.0;
+
+        return $score;
     }
 
     /**

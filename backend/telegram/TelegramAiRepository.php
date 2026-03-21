@@ -6,15 +6,26 @@ namespace Proxbet\Telegram;
 
 use PDO;
 use Proxbet\Line\Logger;
+use Proxbet\Security\Encryption;
 
 require_once __DIR__ . '/../line/logger.php';
+require_once __DIR__ . '/../security/Encryption.php';
 
 final class TelegramAiRepository
 {
     private const NEW_USER_TRIAL_BALANCE = 5;
 
+    private ?Encryption $encryption = null;
+
     public function __construct(private PDO $pdo)
     {
+        // Initialize encryption if available
+        try {
+            $this->encryption = Encryption::fromEnv();
+        } catch (\Throwable $e) {
+            // Encryption not configured - will work with plain text
+            Logger::info('Encryption not configured for API keys', ['error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -227,14 +238,24 @@ final class TelegramAiRepository
     public function listActiveGeminiKeys(): array
     {
         $stmt = $this->pdo->query(
-            'SELECT `id`, `api_key`, `is_active`, `last_error`, `fail_count`, `last_used_at` '
+            'SELECT `id`, `api_key`, `is_active`, `is_encrypted`, `last_error`, `fail_count`, `last_used_at` '
             . 'FROM `gemini_api_keys` '
             . 'WHERE `is_active` = 1 '
             . 'ORDER BY `id` ASC'
         );
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        // Decrypt API keys if encrypted
+        foreach ($rows as &$row) {
+            $row['api_key'] = $this->decryptApiKey($row['api_key'], (bool) ($row['is_encrypted'] ?? false));
+            unset($row['is_encrypted']); // Don't expose encryption status
+        }
+
+        return $rows;
     }
 
     /**
@@ -243,12 +264,22 @@ final class TelegramAiRepository
     public function listGeminiKeys(): array
     {
         $stmt = $this->pdo->query(
-            'SELECT `id`, `api_key`, `is_active`, `last_error`, `fail_count`, `last_used_at`, `created_at` '
+            'SELECT `id`, `api_key`, `is_active`, `is_encrypted`, `last_error`, `fail_count`, `last_used_at`, `created_at` '
             . 'FROM `gemini_api_keys` ORDER BY `id` ASC'
         );
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        // Decrypt API keys if encrypted
+        foreach ($rows as &$row) {
+            $row['api_key'] = $this->decryptApiKey($row['api_key'], (bool) ($row['is_encrypted'] ?? false));
+            unset($row['is_encrypted']); // Don't expose encryption status
+        }
+
+        return $rows;
     }
 
     public function addGeminiKey(string $apiKey): void
@@ -258,11 +289,15 @@ final class TelegramAiRepository
             throw new \InvalidArgumentException('Gemini API key must not be empty');
         }
 
+        // Encrypt the API key if encryption is available
+        $encryptedKey = $this->encryptApiKey($apiKey);
+        $isEncrypted = $this->encryption !== null ? 1 : 0;
+
         $stmt = $this->pdo->prepare(
-            'INSERT INTO `gemini_api_keys` (`api_key`, `is_active`) VALUES (?, 1) '
-            . 'ON DUPLICATE KEY UPDATE `is_active` = 1'
+            'INSERT INTO `gemini_api_keys` (`api_key`, `is_active`, `is_encrypted`) VALUES (?, 1, ?) '
+            . 'ON DUPLICATE KEY UPDATE `is_active` = 1, `is_encrypted` = VALUES(`is_encrypted`)'
         );
-        $stmt->execute([$apiKey]);
+        $stmt->execute([$encryptedKey, $isEncrypted]);
     }
 
     public function setGeminiKeyActive(int $id, bool $isActive): void
@@ -439,5 +474,39 @@ final class TelegramAiRepository
             . 'ON DUPLICATE KEY UPDATE `last_interaction_at` = COALESCE(`last_interaction_at`, NOW())'
         );
         $stmt->execute([$telegramUserId]);
+    }
+
+    /**
+     * Encrypt API key if encryption is available
+     */
+    private function encryptApiKey(string $apiKey): string
+    {
+        if ($this->encryption === null) {
+            return $apiKey;
+        }
+
+        try {
+            return $this->encryption->encrypt($apiKey);
+        } catch (\Throwable $e) {
+            Logger::info('Failed to encrypt API key, storing as plain text', ['error' => $e->getMessage()]);
+            return $apiKey;
+        }
+    }
+
+    /**
+     * Decrypt API key if it's encrypted
+     */
+    private function decryptApiKey(string $apiKey, bool $isEncrypted): string
+    {
+        if (!$isEncrypted || $this->encryption === null) {
+            return $apiKey;
+        }
+
+        try {
+            return $this->encryption->decrypt($apiKey);
+        } catch (\Throwable $e) {
+            Logger::info('Failed to decrypt API key', ['error' => $e->getMessage()]);
+            throw new \RuntimeException('Failed to decrypt API key - encryption key may have changed');
+        }
     }
 }

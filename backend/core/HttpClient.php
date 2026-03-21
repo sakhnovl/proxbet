@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Core;
 
 use Proxbet\Line\Logger;
+use Proxbet\Core\Exceptions\ApiException;
 
 /**
  * Unified HTTP client with retry logic and exponential backoff.
@@ -112,7 +113,7 @@ final class HttpClient
         $res = self::getWithRetry($url, $timeoutMs, $maxRetries, $userAgent);
 
         if (!$res['ok']) {
-            throw new \RuntimeException(
+            throw new ApiException(
                 'HTTP request failed: ' . ($res['error'] ?? 'Unknown error') 
                 . ' (status: ' . $res['status'] . ', attempts: ' . $res['attempts'] . ')'
             );
@@ -120,7 +121,7 @@ final class HttpClient
 
         $decoded = json_decode($res['body'], true);
         if (!is_array($decoded)) {
-            throw new \RuntimeException('Response is not valid JSON');
+            throw new ApiException('Response is not valid JSON');
         }
 
         return $decoded;
@@ -136,20 +137,31 @@ final class HttpClient
     {
         $ch = curl_init($url);
         if ($ch === false) {
-            throw new \RuntimeException('curl_init failed');
+            throw new ApiException('curl_init failed');
         }
 
+        // Adaptive timeout: use provided timeout, but ensure minimum
         $timeoutSeconds = (int) max(1, (int) ceil($timeoutMs / 1000));
+        $connectTimeout = (int) max(1, (int) ceil($timeoutSeconds / 2));
 
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_CONNECTTIMEOUT => $timeoutSeconds,
+            CURLOPT_CONNECTTIMEOUT => $connectTimeout,
             CURLOPT_TIMEOUT => $timeoutSeconds,
             CURLOPT_HTTPHEADER => [
                 'Accept: application/json',
                 'User-Agent: ' . $userAgent,
+                'Connection: keep-alive',
             ],
+            // Enable HTTP keep-alive for connection reuse
+            CURLOPT_TCP_KEEPALIVE => 1,
+            CURLOPT_TCP_KEEPIDLE => 120,
+            CURLOPT_TCP_KEEPINTVL => 60,
+            // Enable HTTP/2 if available
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_2_0,
+            // Enable compression
+            CURLOPT_ENCODING => '',
         ]);
 
         $response = curl_exec($ch);
@@ -159,7 +171,7 @@ final class HttpClient
         curl_close($ch);
 
         if ($response === false) {
-            throw new \RuntimeException('cURL error: ' . $errNo . ' ' . $err);
+            throw new ApiException('cURL error: ' . $errNo . ' ' . $err);
         }
 
         return ['status' => $status, 'body' => (string) $response];

@@ -10,6 +10,9 @@ require_once __DIR__ . '/SchemaBootstrap.php';
 use PDO;
 use PDOException;
 use Proxbet\Line\Logger;
+use Proxbet\Core\CacheManager;
+use Proxbet\Core\Exceptions\DatabaseException;
+use Proxbet\Core\Exceptions\ConfigurationException;
 
 final class Db
 {
@@ -22,15 +25,15 @@ final class Db
         $port = getenv('DB_PORT') ?: '3306';
 
         if ($host === '') {
-            throw new \RuntimeException('DB_HOST is not set');
+            throw new ConfigurationException('DB_HOST is not set');
         }
 
         if ($user === '') {
-            throw new \RuntimeException('DB_USER is not set');
+            throw new ConfigurationException('DB_USER is not set');
         }
 
         if ($db === '') {
-            throw new \RuntimeException('DB_NAME is not set');
+            throw new ConfigurationException('DB_NAME is not set');
         }
 
         try {
@@ -42,14 +45,14 @@ final class Db
             }
 
             if ($pdo === null) {
-                throw new \RuntimeException('Database "' . $db . '" is not available');
+                throw new DatabaseException('Database "' . $db . '" is not available');
             }
 
             SchemaBootstrap::ensure($pdo);
 
             return $pdo;
         } catch (PDOException $e) {
-            throw new \RuntimeException('DB connect failed: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('DB connect failed: ' . $e->getMessage(), 0, $e);
         }
     }
 
@@ -101,10 +104,36 @@ final class Db
     /** @return array<int,array<string,mixed>> */
     public static function getActiveBans(PDO $pdo): array
     {
+        // Try to get from cache first
+        try {
+            if (class_exists('Proxbet\Core\CacheManager')) {
+                $cache = new CacheManager();
+                $cached = $cache->getActiveBans();
+                if ($cached !== null) {
+                    return $cached;
+                }
+            }
+        } catch (\Throwable $e) {
+            Logger::error('Cache read failed for active bans', ['error' => $e->getMessage()]);
+        }
+
+        // Fetch from database
         try {
             $stmt = $pdo->query('SELECT `id`,`country`,`liga`,`home`,`away`,`is_active`,`created_at`,`updated_at` FROM `bans` WHERE `is_active`=1 ORDER BY `id` ASC');
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            return is_array($rows) ? $rows : [];
+            $bans = is_array($rows) ? $rows : [];
+
+            // Cache the result
+            try {
+                if (class_exists('Proxbet\Core\CacheManager')) {
+                    $cache = new CacheManager();
+                    $cache->cacheActiveBans($bans);
+                }
+            } catch (\Throwable $e) {
+                Logger::error('Cache write failed for active bans', ['error' => $e->getMessage()]);
+            }
+
+            return $bans;
         } catch (\Throwable $e) {
             Logger::error('Failed to load bans', ['error' => $e->getMessage()]);
             return [];
@@ -162,6 +191,16 @@ final class Db
             $isActive,
         ]);
 
+        // Invalidate bans cache
+        try {
+            if (class_exists('Proxbet\Core\CacheManager')) {
+                $cache = new CacheManager();
+                $cache->invalidateBans();
+            }
+        } catch (\Throwable $e) {
+            Logger::error('Cache invalidation failed for bans', ['error' => $e->getMessage()]);
+        }
+
         return (int) $pdo->lastInsertId();
     }
 
@@ -179,7 +218,21 @@ final class Db
             $id,
         ]);
 
-        return $stmt->rowCount() > 0;
+        $updated = $stmt->rowCount() > 0;
+
+        // Invalidate bans cache if updated
+        if ($updated) {
+            try {
+                if (class_exists('Proxbet\Core\CacheManager')) {
+                    $cache = new CacheManager();
+                    $cache->invalidateBans();
+                }
+            } catch (\Throwable $e) {
+                Logger::error('Cache invalidation failed for bans', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return $updated;
     }
 
     public static function deleteBan(PDO $pdo, int $id): bool
@@ -187,7 +240,21 @@ final class Db
         $stmt = $pdo->prepare('DELETE FROM `bans` WHERE `id`=?');
         $stmt->execute([$id]);
 
-        return $stmt->rowCount() > 0;
+        $deleted = $stmt->rowCount() > 0;
+
+        // Invalidate bans cache if deleted
+        if ($deleted) {
+            try {
+                if (class_exists('Proxbet\Core\CacheManager')) {
+                    $cache = new CacheManager();
+                    $cache->invalidateBans();
+                }
+            } catch (\Throwable $e) {
+                Logger::error('Cache invalidation failed for bans', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return $deleted;
     }
 
     /**
@@ -206,7 +273,7 @@ final class Db
 
         $columns = SchemaBootstrap::getTableColumns($pdo, 'matches');
         if ($columns === []) {
-            throw new \RuntimeException('Table matches not found or no columns');
+            throw new DatabaseException('Table matches not found or no columns');
         }
 
         $available = array_flip($columns);
@@ -229,7 +296,7 @@ final class Db
         }
 
         if (!in_array('evid', $fields, true)) {
-            throw new \RuntimeException('matches.evid column is required');
+            throw new DatabaseException('matches.evid column is required');
         }
 
         $immutable = [
@@ -250,8 +317,9 @@ final class Db
             static fn(string $field): bool => !in_array($field, $immutable, true)
         ));
 
-        $placeholders = implode(',', array_fill(0, count($fields), '?'));
+        // Build batch INSERT query with multiple value sets
         $colList = implode(',', array_map(static fn(string $column): string => '`' . $column . '`', $fields));
+        $placeholders = '(' . implode(',', array_fill(0, count($fields), '?')) . ')';
 
         $updateSql = '';
         if ($updateFields !== []) {
@@ -268,35 +336,66 @@ final class Db
             $updateSql = ' ON DUPLICATE KEY UPDATE ' . implode(',', $pairs);
         }
 
-        $sql = sprintf('INSERT INTO `matches` (%s) VALUES (%s)%s', $colList, $placeholders, $updateSql);
-        $stmt = $pdo->prepare($sql);
+        // Process in batches of 100 for optimal performance
+        $batchSize = 100;
+        $batches = array_chunk($matches, $batchSize);
 
         $pdo->beginTransaction();
         try {
-            foreach ($matches as $match) {
-                if (!is_array($match) || !isset($match['evid'])) {
-                    $skipped++;
+            foreach ($batches as $batch) {
+                $validRows = [];
+                $batchData = [];
+
+                foreach ($batch as $match) {
+                    if (!is_array($match) || !isset($match['evid'])) {
+                        $skipped++;
+                        continue;
+                    }
+
+                    $row = [];
+                    foreach ($fields as $field) {
+                        $row[] = $match[$field] ?? null;
+                    }
+
+                    $validRows[] = $row;
+                    $batchData = array_merge($batchData, $row);
+                }
+
+                if ($validRows === []) {
                     continue;
                 }
 
-                $row = [];
-                foreach ($fields as $field) {
-                    $row[] = $match[$field] ?? null;
-                }
+                // Build multi-row INSERT
+                $valueSets = implode(',', array_fill(0, count($validRows), $placeholders));
+                $sql = sprintf('INSERT INTO `matches` (%s) VALUES %s%s', $colList, $valueSets, $updateSql);
 
-                $stmt->execute($row);
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($batchData);
 
+                // Calculate inserted vs updated based on affected rows
                 $affected = $stmt->rowCount();
-                if ($affected === 1) {
-                    $inserted++;
+                $rowCount = count($validRows);
+
+                // If affected rows equals row count, all were inserted
+                // If affected rows is 2x row count, all were updated (MySQL returns 2 for updated rows)
+                // Otherwise, it's a mix
+                if ($affected === $rowCount) {
+                    $inserted += $rowCount;
+                } elseif ($affected === $rowCount * 2) {
+                    $updated += $rowCount;
                 } else {
-                    $updated++;
+                    // Mixed case: estimate based on affected rows
+                    $updatedInBatch = (int) floor($affected / 2);
+                    $insertedInBatch = $rowCount - $updatedInBatch;
+                    $inserted += max(0, $insertedInBatch);
+                    $updated += $updatedInBatch;
                 }
             }
+
             $pdo->commit();
         } catch (\Throwable $e) {
             $pdo->rollBack();
-            Logger::error('Transaction failed', ['error' => $e->getMessage()]);
+            Logger::error('Batch upsert transaction failed', ['error' => $e->getMessage()]);
             throw $e;
         }
 

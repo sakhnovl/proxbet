@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Proxbet\Line;
 
+require_once __DIR__ . '/../security/LogFilter.php';
+
+use Proxbet\Security\LogFilter;
+
 final class Logger
 {
     /** @var resource|null */
@@ -31,15 +35,25 @@ final class Logger
     }
 
     /** @param array<string,mixed> $context */
+    public static function warning(string $message, array $context = []): void
+    {
+        self::log('WARNING', $message, $context);
+    }
+
+    /** @param array<string,mixed> $context */
     private static function log(string $level, string $message, array $context): void
     {
         self::init();
 
-        $ts = (new \DateTimeImmutable('now', new \DateTimeZone('Europe/Moscow')))->format('Y-m-d H:i:s');
-        $line = sprintf('[%s] %s: %s', $ts, $level, $message);
+        // Filter sensitive data before logging
+        $filteredMessage = LogFilter::filter($message);
+        $filteredContext = LogFilter::filterArray($context);
 
-        if ($context !== []) {
-            $json = json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $ts = (new \DateTimeImmutable('now', new \DateTimeZone('Europe/Moscow')))->format('Y-m-d H:i:s');
+        $line = sprintf('[%s] %s: %s', $ts, $level, $filteredMessage);
+
+        if ($filteredContext !== []) {
+            $json = json_encode($filteredContext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json !== false) {
                 $line .= ' ' . $json;
             }

@@ -1,0 +1,157 @@
+groups:
+  - name: proxbet_alerts
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Critical error rate
+      - alert: CriticalErrorRate
+        expr: rate(http_requests_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Critical error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # Slow API responses
+      - alert: SlowAPIResponses
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API responses are slow"
+          description: "95th percentile response time is {{ $value }}s (threshold: 1s)"
+
+      # Database query errors
+      - alert: DatabaseQueryErrors
+        expr: rate(db_queries_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database query errors detected"
+          description: "Database error rate is {{ $value | humanizePercentage }}"
+
+      # Slow database queries
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Database queries are slow"
+          description: "95th percentile query time is {{ $value }}s (threshold: 0.5s)"
+
+      # Circuit breaker open
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_open > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: external_api
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker has been open for more than 2 minutes"
+
+      # High circuit breaker trip rate
+      - alert: HighCircuitBreakerTripRate
+        expr: rate(circuit_breaker_trips_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: external_api
+        annotations:
+          summary: "High circuit breaker trip rate"
+          description: "Circuit breaker is tripping frequently: {{ $value }} trips/sec"
+
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m])) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} (threshold: 50%)"
+
+      # No matches processed
+      - alert: NoMatchesProcessed
+        expr: rate(matches_processed_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: parser
+        annotations:
+          summary: "No matches being processed"
+          description: "No matches have been processed in the last 15 minutes"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)"
+
+      # MySQL down
+      - alert: MySQLDown
+        expr: up{job="mysql"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "MySQL is down"
+          description: "MySQL has been down for more than 1 minute"
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+
+      # AI request failures
+      - alert: HighAIRequestFailureRate
+        expr: rate(ai_requests_total[5m]) - rate(ai_requests_cached_total[5m]) > 0 and rate(ai_requests_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "AI requests are failing"
+          description: "No successful AI requests in the last 10 minutes"

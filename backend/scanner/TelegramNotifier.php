@@ -157,6 +157,21 @@ final class TelegramNotifier
      */
     private function formatAlgorithmOneMessage(array $match): string
     {
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : null;
+        $isV2 = $algorithmData !== null && isset($algorithmData['algorithm_version']) && $algorithmData['algorithm_version'] === 2;
+
+        if ($isV2) {
+            return $this->formatAlgorithmOneV2Message($match, $algorithmData);
+        }
+
+        return $this->formatAlgorithmOneLegacyMessage($match);
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function formatAlgorithmOneLegacyMessage(array $match): string
+    {
         $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
         $statsBlock = $this->buildStatsBlock($match);
         $formBlock = $this->buildFormAndH2hBlock($match);
@@ -168,11 +183,95 @@ final class TelegramNotifier
 
         return $header
             . "📊 <b>Вероятность: {$probability}</b>\n"
-            . "├ Форма: {$formScore} (40%)\n"
-            . "├ H2H: {$h2hScore} (20%)\n"
-            . "└ Live: {$liveScore} (40%)\n\n"
+            . "├ Форма: {$formScore} (35%)\n"
+            . "├ H2H: {$h2hScore} (15%)\n"
+            . "└ Live: {$liveScore} (50%)\n\n"
             . $statsBlock
             . $formBlock;
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     * @param array<string,mixed> $algorithmData
+     */
+    private function formatAlgorithmOneV2Message(array $match, array $algorithmData): string
+    {
+        $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
+        $header .= "🧠 <b>Алгоритм 1 v2</b> (улучшенная версия)\n\n";
+        
+        $statsBlock = $this->buildStatsBlock($match);
+        $formBlock = $this->buildFormAndH2hBlock($match);
+
+        $probability = sprintf('%.0f%%', ((float) ($match['probability'] ?? 0)) * 100);
+        $formScore = sprintf('%.2f', (float) ($match['form_score'] ?? 0));
+        $h2hScore = sprintf('%.2f', (float) ($match['h2h_score'] ?? 0));
+        $liveScore = sprintf('%.2f', (float) ($match['live_score'] ?? 0));
+
+        $components = is_array($algorithmData['components'] ?? null) ? $algorithmData['components'] : [];
+        
+        $message = $header
+            . "📊 <b>Вероятность: {$probability}</b>\n"
+            . "├ Форма: {$formScore} (25%)\n"
+            . "├ H2H: {$h2hScore} (10%)\n"
+            . "└ Live: {$liveScore} (65%)\n\n";
+
+        // Add v2 components breakdown
+        if (!empty($components)) {
+            $message .= "🔬 <b>Компоненты Live Score v2:</b>\n";
+            
+            if (isset($components['pdi'])) {
+                $pdi = sprintf('%.2f', (float) $components['pdi']);
+                $message .= "├ PDI (баланс давления): {$pdi}\n";
+            }
+            
+            if (isset($components['shot_quality'])) {
+                $shotQuality = sprintf('%.2f', (float) $components['shot_quality']);
+                $message .= "├ Качество ударов: {$shotQuality}\n";
+            }
+            
+            if (isset($components['trend_acceleration'])) {
+                $trendAccel = sprintf('%.2f', (float) $components['trend_acceleration']);
+                $message .= "├ Ускорение трендов: {$trendAccel}\n";
+            }
+            
+            if (isset($components['xg_pressure'])) {
+                $xgPressure = sprintf('%.2f', (float) $components['xg_pressure']);
+                $message .= "├ xG давление: {$xgPressure}\n";
+            }
+            
+            if (isset($components['time_pressure'])) {
+                $timePressure = sprintf('%.2f', (float) $components['time_pressure']);
+                $message .= "├ Временное давление: {$timePressure}\n";
+            }
+            
+            if (isset($components['league_factor'])) {
+                $leagueFactor = sprintf('%.2f', (float) $components['league_factor']);
+                $message .= "├ Фактор лиги: {$leagueFactor}\n";
+            }
+            
+            if (isset($components['card_factor'])) {
+                $cardFactor = sprintf('%.2f', (float) $components['card_factor']);
+                $message .= "└ Фактор карточек: {$cardFactor}\n";
+            }
+            
+            $message .= "\n";
+            
+            // Red flag warning if present
+            $redFlag = $components['red_flag'] ?? null;
+            if ($redFlag !== null && $redFlag !== '') {
+                $redFlagText = match($redFlag) {
+                    'low_accuracy' => '⚠️ Низкая точность ударов',
+                    'ineffective_pressure' => '⚠️ Неэффективное давление',
+                    'xg_mismatch' => '✅ xG несоответствие (усилитель)',
+                    default => "⚠️ {$redFlag}"
+                };
+                $message .= "{$redFlagText}\n\n";
+            }
+        }
+
+        $message .= $statsBlock . $formBlock;
+
+        return $message;
     }
 
     /**

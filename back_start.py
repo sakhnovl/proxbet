@@ -6,7 +6,7 @@ Scheduler/launcher for ProxBet.
 What it does while this script is running:
 
 1) Cron-like jobs (no overlap per job):
-   - backend\\live.php -> backend\\scanner\\ScannerCli.php -> backend\\bet_checker.php
+   - backend\\live.php -> backend\\scanner\\ScannerCli.php -> backend\\bet_checker.php -> backend\\cleanup.php
                                               every 1 minute as one sequential pipeline
    - backend\\parser.php                      every 5 minutes
    - backend\\stat.php                        every 5 minutes, immediately after parser.php completes
@@ -57,6 +57,7 @@ STAT_PHP = ROOT / "backend" / "stat.php"
 LIVE_PHP = ROOT / "backend" / "live.php"
 SCANNER_PHP = ROOT / "backend" / "scanner" / "ScannerCli.php"
 BET_CHECKER_PHP = ROOT / "backend" / "bet_checker.php"
+CLEANUP_PHP = ROOT / "backend" / "cleanup.php"
 TELEGRAM_BOT_PHP = ROOT / "backend" / "telegram_bot.php"
 
 
@@ -278,6 +279,7 @@ class RuntimeOptions:
     run_bet_checker: bool
     run_parserstat: bool
     run_bot: bool
+    run_cleanup: bool
 
 
 def job_live() -> None:
@@ -292,13 +294,19 @@ def job_bet_checker() -> None:
     run_php(BET_CHECKER_PHP, "bet_checker")
 
 
-def job_minute_pipeline(run_live: bool, run_scanner: bool, run_bet_checker: bool) -> None:
+def job_cleanup() -> None:
+    run_php(CLEANUP_PHP, "cleanup")
+
+
+def job_minute_pipeline(run_live: bool, run_scanner: bool, run_bet_checker: bool, run_cleanup: bool) -> None:
     if run_live:
         job_live()
     if run_scanner:
         job_scanner()
     if run_bet_checker:
         job_bet_checker()
+    if run_cleanup:
+        job_cleanup()
 
 
 def job_parser_then_stat() -> None:
@@ -344,6 +352,7 @@ class BackStartApp:
             run_live=self.options.run_live,
             run_scanner=self.options.run_scanner,
             run_bet_checker=self.options.run_bet_checker,
+            run_cleanup=self.options.run_cleanup,
         )
         if self.options.run_parserstat:
             job_parser_then_stat()
@@ -354,7 +363,7 @@ class BackStartApp:
             self.long_procs.append(LongProcess("telegram-bot", [self.php_bin, str(TELEGRAM_BOT_PHP)], cwd=ROOT))
 
     def configure_jobs(self) -> None:
-        if self.options.run_live or self.options.run_scanner or self.options.run_bet_checker:
+        if self.options.run_live or self.options.run_scanner or self.options.run_bet_checker or self.options.run_cleanup:
             self.jobs.append(
                 Job(
                     name="minute-pipeline-every-1m",
@@ -363,6 +372,7 @@ class BackStartApp:
                         run_live=self.options.run_live,
                         run_scanner=self.options.run_scanner,
                         run_bet_checker=self.options.run_bet_checker,
+                        run_cleanup=self.options.run_cleanup,
                     ),
                 )
             )
@@ -419,6 +429,7 @@ def main() -> int:
     parser.add_argument("--no-live", action="store_true", help="Disable live.php job.")
     parser.add_argument("--no-scanner", action="store_true", help="Disable scanner job.")
     parser.add_argument("--no-bet-checker", action="store_true", help="Disable bet_checker.php job.")
+    parser.add_argument("--no-cleanup", action="store_true", help="Disable cleanup.php job.")
     parser.add_argument("--no-parserstat", action="store_true", help="Disable parser.php+stat.php job.")
     parser.add_argument("--no-bot", action="store_true", help="Do not run backend/telegram_bot.php.")
 
@@ -430,6 +441,7 @@ def main() -> int:
         run_bet_checker=not args.no_bet_checker,
         run_parserstat=not args.no_parserstat,
         run_bot=not args.no_bot,
+        run_cleanup=not args.no_cleanup,
     )
 
     return BackStartApp(options).run()

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Scanner;
 
 use Proxbet\Line\Logger;
+use Proxbet\Statistic\HtMetricsCalculator;
 
 /**
  * Main scanner orchestrator for match analysis.
@@ -19,7 +20,10 @@ final class Scanner
         private DataExtractor $extractor,
         private ProbabilityCalculator $calculator,
         private MatchFilter $filter,
+        private ResultFormatter $formatter,
+        private ?HtMetricsCalculator $htCalculator = null,
     ) {
+        $this->htCalculator = $htCalculator ?? new HtMetricsCalculator();
     }
 
     /**
@@ -80,7 +84,47 @@ final class Scanner
     private function scanMatch(array $match): array
     {
         $base = $this->extractBaseMatchData($match);
-        $liveData = $this->extractor->extractLiveData($match);
+        
+        // Get algorithm version and dual-run settings
+        $algorithmVersion = Config::getAlgorithmVersion();
+        $isDualRun = Config::isDualRunEnabled();
+        
+        // Calculate weighted metrics for V2 if needed
+        $weightedMetrics = null;
+        if ($algorithmVersion === 2 || $isDualRun) {
+            $sgiJson = json_decode($match['sgi_json'] ?? '{}', true);
+            if (is_array($sgiJson)) {
+                $htMetrics = $this->htCalculator->calculate(
+                    $sgiJson,
+                    $match['home'] ?? '',
+                    $match['away'] ?? ''
+                );
+                $weightedMetrics = $htMetrics['debug']['algorithm1_v2']['form'] ?? null;
+            }
+        }
+        
+        // In dual-run mode, extract data separately for each version
+        // Otherwise, use the configured version's extraction method
+        if ($isDualRun) {
+            // Extract data for both versions independently
+            $liveDataLegacy = $this->extractor->extractLiveData($match);
+            $formDataLegacy = $this->extractor->extractFormData($match);
+            $liveDataV2 = $this->extractor->extractLiveDataV2($match);
+            $formDataV2 = $this->extractor->extractFormDataV2($match, $weightedMetrics);
+            
+            // Use primary version data for main flow
+            $liveData = $algorithmVersion === 2 ? $liveDataV2 : $liveDataLegacy;
+            $formData = $algorithmVersion === 2 ? $formDataV2 : $formDataLegacy;
+        } else {
+            // Single version mode
+            if ($algorithmVersion === 2) {
+                $liveData = $this->extractor->extractLiveDataV2($match);
+                $formData = $this->extractor->extractFormDataV2($match, $weightedMetrics);
+            } else {
+                $liveData = $this->extractor->extractLiveData($match);
+                $formData = $this->extractor->extractFormData($match);
+            }
+        }
 
         if ($liveData['minute'] === 0) {
             return [];
@@ -90,20 +134,42 @@ final class Scanner
             return [];
         }
 
-        $formData = $this->extractor->extractFormData($match);
         $h2hData = $this->extractor->extractH2hData($match);
-        $scores = $this->calculator->calculateAll($formData, $h2hData, $liveData);
+        
+        // Calculate scores based on version and dual-run mode
+        $legacyScores = null;
+        $v2Scores = null;
+        
+        if ($isDualRun) {
+            // Calculate both versions with their respective data
+            $legacyScores = $this->calculator->calculateLegacy($formDataLegacy, $h2hData, $liveDataLegacy);
+            $v2Scores = $this->calculator->calculateV2($formDataV2, $h2hData, $liveDataV2);
+            
+            // Use the configured version as primary
+            $scores = $algorithmVersion === 2 ? $v2Scores : $legacyScores;
+        } else {
+            // Calculate only the configured version
+            $scores = $this->calculator->calculateAll($formData, $h2hData, $liveData);
+        }
+        
         $algorithmTwoData = $this->extractor->extractAlgorithmTwoData($match);
         $algorithmThreeData = $this->extractor->extractAlgorithmThreeData($match);
 
-        $algorithmOneDecision = $this->filter->shouldBetAlgorithmOne(
+        // Determine Algorithm 1 decision based on version
+        $algorithmOneDecision = $this->determineAlgorithmOneDecision(
+            $scores,
             $liveData,
-            $scores['probability'],
             $formData,
             $h2hData
         );
+        
         $algorithmTwoDecision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
         $algorithmThreeDecision = $this->filter->shouldBetAlgorithmThree($algorithmThreeData);
+
+        // Save algorithm version and components to database for Algorithm 1
+        $algorithmVersion = $scores['algorithm_version'] ?? 1;
+        $components = ($algorithmVersion === 2 && isset($scores['components'])) ? $scores['components'] : null;
+        $this->extractor->updateAlgorithmData($base['match_id'], $algorithmVersion, $components);
 
         if (!$formData['has_data'] || !$h2hData['has_data']) {
             Logger::info('Scanner algorithm 1 skipped because statistics are incomplete', [
@@ -113,7 +179,36 @@ final class Scanner
                 'has_form' => $formData['has_data'],
                 'has_h2h' => $h2hData['has_data'],
                 'reason' => $algorithmOneDecision['reason'],
+                'algorithm_version' => $scores['algorithm_version'] ?? 1,
             ]);
+        }
+        
+        // Log v2 rejection reasons with detailed components
+        if (isset($scores['algorithm_version']) && $scores['algorithm_version'] === 2) {
+            if (!($algorithmOneDecision['bet'] ?? false)) {
+                $components = $scores['components'] ?? [];
+                Logger::info('Scanner algorithm 1 v2 rejected signal', [
+                    'match_id' => $base['match_id'],
+                    'home' => $base['home'],
+                    'away' => $base['away'],
+                    'minute' => $liveData['minute'],
+                    'reason' => $algorithmOneDecision['reason'] ?? 'unknown',
+                    'probability' => $scores['probability'] ?? 0.0,
+                    'components' => [
+                        'pdi' => $components['pdi'] ?? null,
+                        'shot_quality' => $components['shot_quality'] ?? null,
+                        'trend_acceleration' => $components['trend_acceleration'] ?? null,
+                        'time_pressure' => $components['time_pressure'] ?? null,
+                        'xg_pressure' => $components['xg_pressure'] ?? null,
+                        'card_factor' => $components['card_factor'] ?? null,
+                        'league_factor' => $components['league_factor'] ?? null,
+                        'red_flag' => $components['red_flag'] ?? null,
+                    ],
+                    'form_score' => $scores['form_score'] ?? null,
+                    'h2h_score' => $scores['h2h_score'] ?? null,
+                    'live_score' => $scores['live_score'] ?? null,
+                ]);
+            }
         }
 
         if (!$algorithmTwoData['has_data']) {
@@ -135,13 +230,55 @@ final class Scanner
         }
 
         return [
-            $this->buildAlgorithmOneResult($base, $liveData, $scores, $formData, $h2hData, $algorithmOneDecision),
-            $this->buildAlgorithmTwoResult($base, $liveData, $formData, $h2hData, $algorithmTwoData, $algorithmTwoDecision),
-            $this->buildAlgorithmThreeResult($base, $liveData, $formData, $h2hData, $algorithmThreeData, $algorithmThreeDecision),
+            $this->formatter->formatAlgorithmOne(
+                $base,
+                $liveData,
+                $scores,
+                $formData,
+                $h2hData,
+                $algorithmOneDecision,
+                $legacyScores,
+                $v2Scores
+            ),
+            $this->formatter->formatAlgorithmTwo($base, $liveData, $formData, $h2hData, $algorithmTwoData, $algorithmTwoDecision),
+            $this->formatter->formatAlgorithmThree($base, $liveData, $formData, $h2hData, $algorithmThreeData, $algorithmThreeDecision),
         ];
     }
 
     /**
+     * Determine Algorithm 1 decision based on version.
+     * 
+     * @param array<string,mixed> $scores
+     * @param array<string,mixed> $liveData
+     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
+     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
+     * @return array{bet:bool,reason:string}
+     */
+    private function determineAlgorithmOneDecision(
+        array $scores,
+        array $liveData,
+        array $formData,
+        array $h2hData
+    ): array {
+        $algorithmVersion = $scores['algorithm_version'] ?? 1;
+        
+        // For v2, use the decision from ProbabilityCalculator
+        if ($algorithmVersion === 2 && isset($scores['decision'])) {
+            return $scores['decision'];
+        }
+        
+        // For legacy, use MatchFilter
+        return $this->filter->shouldBetAlgorithmOne(
+            $liveData,
+            $scores['probability'],
+            $formData,
+            $h2hData
+        );
+    }
+
+    /**
+     * Extract base match data.
+     * 
      * @param array<string,mixed> $match
      * @return array{match_id:int,country:string,liga:string,home:string,away:string}
      */
@@ -154,225 +291,5 @@ final class Scanner
             'home' => (string) ($match['home'] ?? ''),
             'away' => (string) ($match['away'] ?? ''),
         ];
-    }
-
-    /**
-     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array<string,mixed> $liveData
-     * @param array<string,mixed> $scores
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
-     * @param array{bet:bool,reason:string} $decision
-     * @return array<string,mixed>
-     */
-    private function buildAlgorithmOneResult(
-        array $base,
-        array $liveData,
-        array $scores,
-        array $formData,
-        array $h2hData,
-        array $decision
-    ): array {
-        return $this->buildCommonResult(
-            $base,
-            $liveData,
-            self::ALGORITHM_ONE_ID,
-            'Алгоритм 1',
-            'first_half_goal',
-            $decision,
-            [
-                'score_home' => $liveData['ht_hscore'],
-                'score_away' => $liveData['ht_ascore'],
-                'probability' => $scores['probability'],
-                'form_score' => $scores['form_score'],
-                'h2h_score' => $scores['h2h_score'],
-                'live_score' => $scores['live_score'],
-                'form_data' => [
-                    'home_goals' => $formData['home_goals'],
-                    'away_goals' => $formData['away_goals'],
-                ],
-                'h2h_data' => [
-                    'home_goals' => $h2hData['home_goals'],
-                    'away_goals' => $h2hData['away_goals'],
-                ],
-                'algorithm_data' => null,
-            ]
-        );
-    }
-
-    /**
-     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array<string,mixed> $liveData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
-     * @param array<string,mixed> $algorithmTwoData
-     * @param array{bet:bool,reason:string} $decision
-     * @return array<string,mixed>
-     */
-    private function buildAlgorithmTwoResult(
-        array $base,
-        array $liveData,
-        array $formData,
-        array $h2hData,
-        array $algorithmTwoData,
-        array $decision
-    ): array {
-        return $this->buildCommonResult(
-            $base,
-            $liveData,
-            self::ALGORITHM_TWO_ID,
-            'Алгоритм 2',
-            'first_half_goal',
-            $decision,
-            [
-                'score_home' => $liveData['ht_hscore'],
-                'score_away' => $liveData['ht_ascore'],
-                'probability' => null,
-                'form_score' => null,
-                'h2h_score' => null,
-                'live_score' => null,
-                'form_data' => [
-                    'home_goals' => $formData['home_goals'],
-                    'away_goals' => $formData['away_goals'],
-                ],
-                'h2h_data' => [
-                    'home_goals' => $h2hData['home_goals'],
-                    'away_goals' => $h2hData['away_goals'],
-                ],
-                'algorithm_data' => $algorithmTwoData,
-            ]
-        );
-    }
-
-    /**
-     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array<string,mixed> $liveData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
-     * @param array<string,mixed> $algorithmThreeData
-     * @param array<string,mixed> $decision
-     * @return array<string,mixed>
-     */
-    private function buildAlgorithmThreeResult(
-        array $base,
-        array $liveData,
-        array $formData,
-        array $h2hData,
-        array $algorithmThreeData,
-        array $decision
-    ): array {
-        $algorithmThreePayload = [
-            'selected_team_side' => $decision['selected_team_side'] ?? null,
-            'selected_team_name' => $decision['selected_team_name'] ?? null,
-            'selected_team_goals_current' => $decision['selected_team_goals_current'] ?? null,
-            'selected_team_target_bet' => $decision['selected_team_target_bet'] ?? null,
-            'triggered_rule' => $decision['triggered_rule'] ?? null,
-            'triggered_rule_label' => $decision['triggered_rule_label'] ?? null,
-            'home_attack_ratio' => $decision['home_attack_ratio'] ?? $this->calculateRatio(
-                (int) ($algorithmThreeData['table_goals_1'] ?? 0),
-                (int) ($algorithmThreeData['table_games_1'] ?? 0)
-            ),
-            'away_defense_ratio' => $decision['away_defense_ratio'] ?? $this->calculateRatio(
-                (int) ($algorithmThreeData['table_missed_2'] ?? 0),
-                (int) ($algorithmThreeData['table_games_2'] ?? 0)
-            ),
-            'away_attack_ratio' => $decision['away_attack_ratio'] ?? $this->calculateRatio(
-                (int) ($algorithmThreeData['table_goals_2'] ?? 0),
-                (int) ($algorithmThreeData['table_games_2'] ?? 0)
-            ),
-            'home_defense_ratio' => $decision['home_defense_ratio'] ?? $this->calculateRatio(
-                (int) ($algorithmThreeData['table_missed_1'] ?? 0),
-                (int) ($algorithmThreeData['table_games_1'] ?? 0)
-            ),
-            'table_games_1' => $algorithmThreeData['table_games_1'],
-            'table_goals_1' => $algorithmThreeData['table_goals_1'],
-            'table_missed_1' => $algorithmThreeData['table_missed_1'],
-            'table_games_2' => $algorithmThreeData['table_games_2'],
-            'table_goals_2' => $algorithmThreeData['table_goals_2'],
-            'table_missed_2' => $algorithmThreeData['table_missed_2'],
-            'match_status' => $algorithmThreeData['match_status'],
-        ];
-
-        return $this->buildCommonResult(
-            $base,
-            $liveData,
-            self::ALGORITHM_THREE_ID,
-            'Алгоритм 3',
-            'team_total',
-            $decision,
-            [
-                'score_home' => $liveData['live_hscore'],
-                'score_away' => $liveData['live_ascore'],
-                'probability' => null,
-                'form_score' => null,
-                'h2h_score' => null,
-                'live_score' => null,
-                'form_data' => [
-                    'home_goals' => $formData['home_goals'],
-                    'away_goals' => $formData['away_goals'],
-                ],
-                'h2h_data' => [
-                    'home_goals' => $h2hData['home_goals'],
-                    'away_goals' => $h2hData['away_goals'],
-                ],
-                'algorithm_data' => $algorithmThreePayload,
-            ]
-        );
-    }
-
-    /**
-     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
-     * @param array<string,mixed> $liveData
-     * @param array{probability:float|null,form_score:float|null,h2h_score:float|null,live_score:float|null,score_home:int,score_away:int,form_data:array<string,mixed>,h2h_data:array<string,mixed>,algorithm_data:array<string,mixed>|null} $payload
-     * @param array<string,mixed> $decision
-     * @return array<string,mixed>
-     */
-    private function buildCommonResult(
-        array $base,
-        array $liveData,
-        int $algorithmId,
-        string $algorithmName,
-        string $signalType,
-        array $decision,
-        array $payload
-    ): array {
-        return [
-            'match_id' => $base['match_id'],
-            'country' => $base['country'],
-            'liga' => $base['liga'],
-            'home' => $base['home'],
-            'away' => $base['away'],
-            'minute' => $liveData['minute'],
-            'time' => $liveData['time_str'],
-            'match_status' => $liveData['match_status'],
-            'score_home' => $payload['score_home'],
-            'score_away' => $payload['score_away'],
-            'algorithm_id' => $algorithmId,
-            'algorithm_name' => $algorithmName,
-            'signal_type' => $signalType,
-            'probability' => $payload['probability'],
-            'form_score' => $payload['form_score'],
-            'h2h_score' => $payload['h2h_score'],
-            'live_score' => $payload['live_score'],
-            'decision' => $decision,
-            'stats' => [
-                'shots_total' => $liveData['shots_total'],
-                'shots_on_target' => $liveData['shots_on_target'],
-                'dangerous_attacks' => $liveData['dangerous_attacks'],
-                'corners' => $liveData['corners'],
-            ],
-            'form_data' => $payload['form_data'],
-            'h2h_data' => $payload['h2h_data'],
-            'algorithm_data' => $payload['algorithm_data'],
-        ];
-    }
-
-    private function calculateRatio(int $value, int $games): float
-    {
-        if ($games <= 0) {
-            return 0.0;
-        }
-
-        return ($value / 2) / $games;
     }
 }

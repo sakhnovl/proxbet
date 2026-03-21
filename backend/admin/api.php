@@ -25,16 +25,35 @@ declare(strict_types=1);
 require_once __DIR__ . '/../bootstrap/autoload.php';
 require_once __DIR__ . '/../bootstrap/runtime.php';
 require_once __DIR__ . '/../cors.php';
+require_once __DIR__ . '/../security/RateLimiter.php';
+require_once __DIR__ . '/../security/CsrfProtection.php';
+require_once __DIR__ . '/../security/InputValidator.php';
+require_once __DIR__ . '/../security/SecurityHeaders.php';
+require_once __DIR__ . '/../security/RequestValidator.php';
+require_once __DIR__ . '/../security/AuditLogger.php';
 
 use Proxbet\Line\Db;
 use Proxbet\Statistic\StatisticServiceFactory;
+use Proxbet\Security\RateLimiter;
+use Proxbet\Security\CsrfProtection;
+use Proxbet\Security\InputValidator;
+use Proxbet\Security\SecurityHeaders;
+use Proxbet\Security\RequestValidator;
+use Proxbet\Security\AuditLogger;
 
 proxbet_bootstrap_env();
+
+// ── Security Headers ───────────────────────────────────────────────────────
+
+SecurityHeaders::apply(isApi: true);
+
+// ── Request Size Validation ────────────────────────────────────────────────
+
+RequestValidator::validateRequestSize();
 
 // ── CORS / Headers ─────────────────────────────────────────────────────────
 
 header('Content-Type: application/json; charset=utf-8');
-header('X-Content-Type-Options: nosniff');
 proxbetHandleCors(['GET', 'POST', 'OPTIONS'], ['Authorization', 'Content-Type']);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -64,20 +83,27 @@ function getBody(): array
 
 function sanitizeString(?string $value): ?string
 {
-    if ($value === null || trim($value) === '') {
-        return null;
-    }
-    return mb_substr(trim($value), 0, 255);
+    return InputValidator::sanitizeString($value, 255);
 }
 
 function sanitizeLike(?string $value): ?string
 {
-    $value = sanitizeString($value);
-    if ($value === null) {
-        return null;
-    }
+    return InputValidator::sanitizeLike($value);
+}
 
-    return str_replace(['%', '_'], ['\%', '\_'], $value);
+// ── Rate Limiting ──────────────────────────────────────────────────────────
+
+$rateLimiter = new RateLimiter(
+    __DIR__ . '/../../data/rate_limits',
+    maxAttempts: 20,
+    windowSeconds: 60
+);
+
+$clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+if (!$rateLimiter->check('admin_api:' . $clientIp)) {
+    http_response_code(429);
+    header('Retry-After: 60');
+    jsonError('Too many requests. Please try again later.', 429);
 }
 
 // ── Authentication ─────────────────────────────────────────────────────────
@@ -89,7 +115,7 @@ try {
     jsonError('Server misconfiguration: ' . $e->getMessage(), 500);
 }
 
-// Extract token from Authorization header or query string
+// Extract token from Authorization header ONLY (no query string for security)
 $token = '';
 
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
@@ -102,21 +128,31 @@ if ($authHeader === '' && function_exists('apache_request_headers')) {
 
 if (str_starts_with($authHeader, 'Bearer ')) {
     $token = substr($authHeader, 7);
-} elseif (isset($_GET['token'])) {
-    $token = (string) $_GET['token'];
-}
-
-if (!hash_equals($adminPassword, $token)) {
-    jsonError('Unauthorized.', 401);
 }
 
 // ── Database Connection ────────────────────────────────────────────────────
 
 try {
     $pdo = Db::connectFromEnv();
+    $auditLogger = new AuditLogger($pdo);
 } catch (\Throwable $e) {
-    jsonError('Database connection failed: ' . $e->getMessage(), 503);
+    $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
+    jsonError('Database connection failed: ' . $sanitizedError, 503);
 }
+
+// Security: No longer accept token from query string
+// This prevents token leakage in server logs and browser history
+if ($token === '') {
+    jsonError('Missing Authorization header. Use: Authorization: Bearer <token>', 401);
+}
+
+if (!hash_equals($adminPassword, $token)) {
+    $auditLogger->logAuthAttempt(false, null, $clientIp, 'Invalid token');
+    jsonError('Unauthorized.', 401);
+}
+
+// Log successful authentication
+$auditLogger->logAuthAttempt(true, 'admin', $clientIp);
 
 // ── Router ─────────────────────────────────────────────────────────────────
 
@@ -149,6 +185,8 @@ function handleListBans(PDO $pdo): never
 
 function handleAddBan(PDO $pdo): never
 {
+    global $auditLogger, $clientIp;
+    
     $body = getBody();
 
     $data = [
@@ -167,14 +205,21 @@ function handleAddBan(PDO $pdo): never
     try {
         $id = Db::addBan($pdo, $data);
         $ban = Db::getBanById($pdo, $id);
+        
+        // Audit log
+        $auditLogger->logAdminAction('add_ban', 'admin', 'ban', $id, $data, $clientIp);
+        
         jsonOk($ban);
     } catch (\Throwable $e) {
-        jsonError('Failed to add ban: ' . $e->getMessage(), 500);
+        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
+        jsonError('Failed to add ban: ' . $sanitizedError, 500);
     }
 }
 
 function handleUpdateBan(PDO $pdo): never
 {
+    global $auditLogger, $clientIp;
+    
     $body = getBody();
     $id   = (int) ($body['id'] ?? 0);
 
@@ -206,14 +251,21 @@ function handleUpdateBan(PDO $pdo): never
         }
 
         $updated = Db::getBanById($pdo, $id);
+        
+        // Audit log
+        $auditLogger->logAdminAction('update_ban', 'admin', 'ban', $id, $data, $clientIp);
+        
         jsonOk($updated);
     } catch (\Throwable $e) {
-        jsonError('Failed to update ban: ' . $e->getMessage(), 500);
+        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
+        jsonError('Failed to update ban: ' . $sanitizedError, 500);
     }
 }
 
 function handleDeleteBan(PDO $pdo): never
 {
+    global $auditLogger, $clientIp;
+    
     $body = getBody();
     $id   = (int) ($body['id'] ?? 0);
 
@@ -228,9 +280,14 @@ function handleDeleteBan(PDO $pdo): never
 
     try {
         Db::deleteBan($pdo, $id);
+        
+        // Audit log
+        $auditLogger->logAdminAction('delete_ban', 'admin', 'ban', $id, null, $clientIp);
+        
         jsonOk(['deleted_id' => $id]);
     } catch (\Throwable $e) {
-        jsonError('Failed to delete ban: ' . $e->getMessage(), 500);
+        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
+        jsonError('Failed to delete ban: ' . $sanitizedError, 500);
     }
 }
 

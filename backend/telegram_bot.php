@@ -17,11 +17,13 @@ require_once __DIR__ . '/bans/handlers_message.php';
 require_once __DIR__ . '/bans/handlers_callback.php';
 require_once __DIR__ . '/bans/router.php';
 
+use Proxbet\Core\GracefulShutdown;
 use Proxbet\Line\Db;
 use Proxbet\Line\Logger;
 
 proxbet_bootstrap_env();
 Logger::init();
+GracefulShutdown::register();
 
 try {
     proxbet_require_env(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ADMIN_IDS', 'DB_HOST', 'DB_USER', 'DB_NAME']);
@@ -58,7 +60,7 @@ try {
     exit(1);
 }
 
-while (true) {
+while (!GracefulShutdown::isShutdownRequested()) {
     try {
         $resp = tgRequest($apiBase, 'getUpdates', [
             'offset' => $offset > 0 ? ($offset + 1) : 0,
@@ -91,7 +93,17 @@ while (true) {
         saveState($statePath, $state);
     } catch (Throwable $e) {
         Logger::error('Telegram polling error', ['error' => $e->getMessage()]);
+        
+        if (GracefulShutdown::isShutdownRequested()) {
+            break;
+        }
+        
         // Small backoff to avoid tight loop on errors
         usleep(500 * 1000);
     }
 }
+
+// Cleanup on shutdown
+GracefulShutdown::cleanup();
+Logger::info('Telegram bot stopped gracefully');
+exit(0);
