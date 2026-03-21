@@ -15,16 +15,20 @@ final class XgPressureCalculatorTest extends TestCase
         $this->calculator = new XgPressureCalculator();
     }
 
-    public function testReturnsZeroWhenXgIsNull(): void
+    public function testFallsBackWhenXgIsNull(): void
     {
         $liveData = [
             'xg_home' => null,
             'xg_away' => 1.0,
+            'shots_total' => 9,
+            'shots_on_target' => 4,
+            'dangerous_attacks' => 32,
+            'corners' => 3,
         ];
 
         $result = $this->calculator->calculate($liveData);
 
-        $this->assertSame(0.0, $result);
+        $this->assertGreaterThan(0.0, $result);
     }
 
     public function testReturnsZeroWhenXgIsMissing(): void
@@ -86,5 +90,23 @@ final class XgPressureCalculatorTest extends TestCase
 
         // Total: 1.2, normalized: 1.2/1.5 = 0.8
         $this->assertEqualsWithDelta(0.8, $result, 0.0001);
+    }
+
+    public function testBuildsFallbackFromLiveSignalsWhenXgMissing(): void
+    {
+        $liveData = [
+            'shots_total' => 11,
+            'shots_on_target' => 5,
+            'dangerous_attacks' => 40,
+            'corners' => 4,
+            'trend_dangerous_attacks_delta' => 12,
+            'trend_shots_total_delta' => 6,
+            'trend_shots_on_target_delta' => 2,
+        ];
+
+        $result = $this->calculator->calculate($liveData);
+
+        $this->assertGreaterThan(0.45, $result);
+        $this->assertLessThan(1.0, $result);
     }
 }

@@ -50,7 +50,10 @@ final class DualRunTest extends TestCase
         $this->assertArrayHasKey('probability_diff', $result['dual_run']);
         $this->assertArrayHasKey('decision_match', $result['dual_run']);
         $this->assertArrayHasKey('divergence_level', $result['dual_run']);
+        $this->assertArrayHasKey('legacy_decision', $result['dual_run']);
+        $this->assertArrayHasKey('v2_decision', $result['dual_run']);
         $this->assertSame($result['dual_run']['legacy_bet'], $result['bet']);
+        $this->assertSame('bet', $result['dual_run']['legacy_decision']);
         $this->assertSame($result['dual_run']['legacy_probability'], $result['confidence']);
         $this->assertGreaterThanOrEqual(0.0, $result['dual_run']['probability_diff']);
     }
@@ -66,6 +69,7 @@ final class DualRunTest extends TestCase
         $this->assertArrayHasKey('dual_run', $result);
         $this->assertSame(2, $result['dual_run']['primary_version']);
         $this->assertSame($result['dual_run']['v2_bet'], $result['bet']);
+        $this->assertSame('bet', $result['dual_run']['v2_decision']);
         $this->assertSame($result['dual_run']['v2_probability'], $result['confidence']);
     }
 

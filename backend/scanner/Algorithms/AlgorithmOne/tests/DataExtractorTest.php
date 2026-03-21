@@ -69,6 +69,29 @@ final class DataExtractorTest extends TestCase
         $this->assertSame(0.8, $result['weighted']['home']['attack']);
     }
 
+    public function testExtractFormDataV2WithCurrentHtMetricsFormat(): void
+    {
+        $match = [
+            'ht_match_goals_1' => 4,
+            'ht_match_goals_2' => 3,
+        ];
+
+        $weightedMetrics = [
+            'home' => ['attack' => 0.8, 'defense' => 0.3],
+            'away' => ['attack' => 0.6, 'defense' => 0.4],
+            'weighted_score' => 0.75,
+        ];
+
+        $result = $this->extractor->extractFormDataV2($match, $weightedMetrics);
+
+        $this->assertSame(4, $result['home_goals']);
+        $this->assertSame(3, $result['away_goals']);
+        $this->assertTrue($result['has_data']);
+        $this->assertNotNull($result['weighted']);
+        $this->assertSame(0.75, $result['weighted']['score']);
+        $this->assertSame(0.4, $result['weighted']['away']['defense']);
+    }
+
     public function testExtractFormDataV2WithoutWeightedMetrics(): void
     {
         $match = [
@@ -160,6 +183,8 @@ final class DataExtractorTest extends TestCase
     {
         $match = [
             'time' => '28:15',
+            'country' => 'England',
+            'liga' => 'Premier League',
             'live_shots_on_target_home' => 6,
             'live_shots_on_target_away' => 4,
             'live_shots_off_target_home' => 3,
@@ -176,6 +201,8 @@ final class DataExtractorTest extends TestCase
             'live_xg_away' => 1.5,
             'live_yellow_cards_home' => 2,
             'live_yellow_cards_away' => 1,
+            'live_red_cards_home' => 0,
+            'live_red_cards_away' => 1,
             'table_avg' => 2.8,
             'live_trend_has_data' => 0,
             'match_status' => '1H',
@@ -190,14 +217,20 @@ final class DataExtractorTest extends TestCase
         $this->assertSame(3.3, $result['xg_total']);
         $this->assertSame(2, $result['yellow_cards_home']);
         $this->assertSame(1, $result['yellow_cards_away']);
+        $this->assertSame(0, $result['red_cards_home']);
+        $this->assertSame(1, $result['red_cards_away']);
         $this->assertSame(2.8, $result['table_avg']);
         $this->assertFalse($result['has_trend_data']);
+        $this->assertSame('top-tier', $result['league_category']);
+        $this->assertSame(0.55, $result['league_profile']['probability_threshold']);
     }
 
     public function testExtractLiveDataV2WithoutTableAvg(): void
     {
         $match = [
             'time' => '20:00',
+            'country' => 'Italy',
+            'liga' => 'Primavera U20',
             'live_shots_on_target_home' => 3,
             'live_shots_on_target_away' => 2,
             'live_shots_off_target_home' => 1,
@@ -221,6 +254,8 @@ final class DataExtractorTest extends TestCase
         $this->assertNull($result['xg_home']);
         $this->assertNull($result['xg_away']);
         $this->assertSame(0.0, $result['xg_total']);
+        $this->assertSame('youth', $result['league_category']);
+        $this->assertSame(1.20, $result['league_profile']['min_attack_tempo']);
     }
 
     public function testParseMinuteFromTimeString(): void

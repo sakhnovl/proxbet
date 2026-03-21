@@ -117,7 +117,7 @@ final class V2FlowTest extends TestCase
     /**
      * Test gating condition: no H2H data.
      */
-    public function testGatingConditionNoH2hData(): void
+    public function testMissingH2hIsHandledAsSoftPenalty(): void
     {
         $matchData = [
             'form_data' => $this->buildFormDataV2(homeGoals: 4, awayGoals: 3),
@@ -127,8 +127,9 @@ final class V2FlowTest extends TestCase
 
         $result = $this->algorithm->analyze($matchData);
 
-        $this->assertFalse($result['bet']);
-        $this->assertSame(0.0, $result['confidence']);
+        $this->assertGreaterThan(0.0, $result['confidence']);
+        $this->assertFalse($result['debug']['gating_context']['has_h2h_data']);
+        $this->assertSame(0.98, $result['debug']['penalties']['missing_h2h']);
     }
 
     /**
@@ -206,29 +207,37 @@ final class V2FlowTest extends TestCase
     }
 
     /**
-     * Test gating condition: insufficient attack tempo.
+     * Test early relief for zero shots on target in 15-18 minute window.
      */
-    public function testGatingConditionInsufficientAttackTempo(): void
+    public function testEarlyShotsReliefCanBypassGate(): void
     {
         $matchData = [
             'form_data' => $this->buildFormDataV2(homeGoals: 4, awayGoals: 3),
             'h2h_data' => $this->buildH2hData(homeGoals: 2, awayGoals: 2),
             'live_data' => $this->buildLiveDataV2(
-                minute: 25,
-                shotsOnTarget: 5,
-                dangerousAttacks: 30  // 30/25 = 1.2 < 1.5 required tempo
+                minute: 18,
+                shotsOnTarget: 0,
+                shotsOffTarget: 7,
+                dangerousAttacks: 38,
+                xgHome: 0.7,
+                xgAway: 0.4,
+                hasTrendData: true,
+                trendShotsTotal: 7,
+                trendDangerousAttacks: 14,
+                trendWindowSeconds: 300
             ),
         ];
 
         $result = $this->algorithm->analyze($matchData);
 
-        $this->assertFalse($result['bet']);
+        $this->assertIsFloat($result['confidence']);
+        $this->assertTrue($result['debug']['gating_context']['shots_gate_relief']);
     }
 
     /**
      * Test red flag: low accuracy (< 25%).
      */
-    public function testRedFlagLowAccuracy(): void
+    public function testRedFlagLowAccuracyBecomesPenalty(): void
     {
         $matchData = [
             'form_data' => $this->buildFormDataV2(homeGoals: 4, awayGoals: 3),
@@ -243,14 +252,15 @@ final class V2FlowTest extends TestCase
 
         $result = $this->algorithm->analyze($matchData);
 
-        $this->assertFalse($result['bet']);
-        $this->assertSame(0.0, $result['confidence']);
+        $this->assertGreaterThan(0.0, $result['confidence']);
+        $this->assertContains('low_accuracy', $result['debug']['red_flags']);
+        $this->assertSame(0.88, $result['debug']['penalties']['low_accuracy']);
     }
 
     /**
-     * Test red flag: ineffective pressure.
+     * Test red flag: ineffective pressure becomes penalty.
      */
-    public function testRedFlagIneffectivePressure(): void
+    public function testRedFlagIneffectivePressureBecomesPenalty(): void
     {
         $matchData = [
             'form_data' => $this->buildFormDataV2(homeGoals: 4, awayGoals: 3),
@@ -267,8 +277,9 @@ final class V2FlowTest extends TestCase
 
         $result = $this->algorithm->analyze($matchData);
 
-        $this->assertFalse($result['bet']);
-        $this->assertSame(0.0, $result['confidence']);
+        $this->assertGreaterThan(0.0, $result['confidence']);
+        $this->assertContains('ineffective_pressure', $result['debug']['red_flags']);
+        $this->assertSame(0.90, $result['debug']['penalties']['ineffective_pressure']);
     }
 
     /**

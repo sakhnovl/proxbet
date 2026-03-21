@@ -101,6 +101,13 @@ final class ResultFormatterTest extends TestCase
             'form_score' => 0.75,
             'h2h_score' => 0.6,
             'live_score' => 0.8,
+            'debug_trace' => [
+                'gating_passed' => true,
+                'gating_reason' => '',
+                'decision_reason' => 'probability_threshold_met',
+                'probability' => 0.72,
+                'red_flag' => null,
+            ],
             'components' => [
                 'pdi' => 0.85,
                 'shot_quality' => 0.78,
@@ -127,6 +134,10 @@ final class ResultFormatterTest extends TestCase
         $this->assertArrayHasKey('components', $result['algorithm_data']);
         $this->assertSame(0.85, $result['algorithm_data']['components']['pdi']);
         $this->assertNull($result['algorithm_data']['red_flag']);
+        $this->assertTrue($result['algorithm_data']['gating_passed']);
+        $this->assertSame('probability_threshold_met', $result['algorithm_data']['decision_reason']);
+        $this->assertSame(0.72, $result['algorithm_data']['probability']);
+        $this->assertArrayHasKey('debug_trace', $result['algorithm_data']);
     }
 
     public function testFormatV2WithRedFlag(): void
@@ -157,6 +168,13 @@ final class ResultFormatterTest extends TestCase
             'form_score' => 0.7,
             'h2h_score' => 0.5,
             'live_score' => 0.4,
+            'debug_trace' => [
+                'gating_passed' => true,
+                'gating_reason' => '',
+                'decision_reason' => 'red_flag_low_accuracy',
+                'probability' => 0.45,
+                'red_flag' => 'low_accuracy',
+            ],
             'components' => [
                 'pdi' => 0.75,
                 'shot_quality' => 0.3,
@@ -203,6 +221,13 @@ final class ResultFormatterTest extends TestCase
             'form_score' => 0.72,
             'h2h_score' => 0.55,
             'live_score' => 0.78,
+            'debug_trace' => [
+                'gating_passed' => true,
+                'gating_reason' => '',
+                'decision_reason' => 'probability_threshold_met',
+                'probability' => 0.7,
+                'red_flag' => null,
+            ],
             'components' => [
                 'pdi' => 0.8,
                 'shot_quality' => 0.75,
@@ -243,6 +268,64 @@ final class ResultFormatterTest extends TestCase
         $this->assertSame(0.62, $result['algorithm_data']['dual_run']['legacy_probability']);
         $this->assertSame(0.7, $result['algorithm_data']['dual_run']['v2_probability']);
         $this->assertEqualsWithDelta(0.08, $result['algorithm_data']['dual_run']['probability_diff'], 0.0001);
+    }
+
+    public function testFormatLegacyPrimaryWithDualRunStillExposesAlgorithmData(): void
+    {
+        $base = [
+            'match_id' => 22223,
+            'country' => 'Italy',
+            'liga' => 'Serie A',
+            'home' => 'Roma',
+            'away' => 'Lazio',
+        ];
+
+        $liveData = [
+            'minute' => 24,
+            'time_str' => '24:00',
+            'match_status' => '1H',
+            'ht_hscore' => 0,
+            'ht_ascore' => 0,
+            'shots_total' => 11,
+            'shots_on_target' => 5,
+            'dangerous_attacks' => 37,
+            'corners' => 4,
+        ];
+
+        $scores = [
+            'algorithm_version' => 1,
+            'probability' => 0.63,
+            'form_score' => 0.69,
+            'h2h_score' => 0.55,
+            'live_score' => 0.71,
+            'debug_trace' => [
+                'gating_passed' => true,
+                'gating_reason' => '',
+                'decision_reason' => 'legacy_threshold_met',
+                'probability' => 0.63,
+            ],
+            'dual_run' => [
+                'primary_version' => 1,
+                'legacy_probability' => 0.63,
+                'legacy_decision' => 'bet',
+                'v2_probability' => 0.57,
+                'v2_decision' => 'no_bet',
+                'probability_diff' => 0.06,
+                'decision_match' => false,
+                'divergence_level' => 'high',
+            ],
+        ];
+
+        $formData = ['home_goals' => 4, 'away_goals' => 2, 'has_data' => true];
+        $h2hData = ['home_goals' => 3, 'away_goals' => 1, 'has_data' => true];
+        $decision = ['bet' => true, 'reason' => 'Legacy conditions met'];
+
+        $result = $this->formatter->format($base, $liveData, $scores, $formData, $h2hData, $decision);
+
+        $this->assertSame(1, $result['algorithm_data']['algorithm_version']);
+        $this->assertSame('bet', $result['algorithm_data']['dual_run']['legacy_decision']);
+        $this->assertSame('no_bet', $result['algorithm_data']['dual_run']['v2_decision']);
+        $this->assertSame('high', $result['algorithm_data']['dual_run']['divergence_level']);
     }
 
     public function testFormatStatsSection(): void

@@ -148,4 +148,24 @@ final class RedFlagCheckerTest extends TestCase
         // low_accuracy should be returned first
         $this->assertSame('low_accuracy', $result);
     }
+
+    public function testCollectReturnsAllFlagsInPriorityOrder(): void
+    {
+        $liveData = [
+            'shots_total' => 12,
+            'shots_on_target' => 2,
+            'dangerous_attacks_home' => 35,
+            'dangerous_attacks_away' => 10,
+            'shots_on_target_home' => 1,
+            'shots_on_target_away' => 1,
+            'xg_home' => 1.0,
+            'xg_away' => 0.5,
+            'ht_hscore' => 0,
+            'ht_ascore' => 0,
+        ];
+
+        $result = $this->checker->collect($liveData, 28);
+
+        $this->assertSame(['low_accuracy', 'ineffective_pressure', 'xg_mismatch'], $result);
+    }
 }

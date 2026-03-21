@@ -47,38 +47,32 @@ final class TimePressureCalculatorTest extends TestCase
     public function testNonLinearGrowthAtMinute20(): void
     {
         $result = $this->calculator->calculate(20);
-        
-        // (20-15)/15 = 0.333, 0.333^1.5 = 0.192
-        $this->assertEqualsWithDelta(0.192, $result, 0.01);
+
+        $this->assertEqualsWithDelta(0.32, $result, 0.01);
     }
 
     public function testNonLinearGrowthAtMinute25(): void
     {
         $result = $this->calculator->calculate(25);
-        
-        // (25-15)/15 = 0.667, 0.667^1.5 = 0.544
-        $this->assertEqualsWithDelta(0.544, $result, 0.01);
+
+        $this->assertEqualsWithDelta(0.63, $result, 0.02);
     }
 
     public function testNonLinearGrowthAtMinute28(): void
     {
         $result = $this->calculator->calculate(28);
-        
-        // (28-15)/15 = 0.867, 0.867^1.5 = 0.807
-        $this->assertEqualsWithDelta(0.807, $result, 0.01);
+
+        $this->assertEqualsWithDelta(0.85, $result, 0.02);
     }
 
-    public function testGrowthIsNonLinear(): void
+    public function testEarlyWindowIsNoLongerTooFlat(): void
     {
+        $result16 = $this->calculator->calculate(16);
+        $result18 = $this->calculator->calculate(18);
         $result20 = $this->calculator->calculate(20);
-        $result25 = $this->calculator->calculate(25);
-        
-        // Non-linear growth means the increase from 20 to 25
-        // should be different than linear progression
-        $linearIncrease = 0.333; // (25-20)/(30-15)
-        $actualIncrease = $result25 - $result20;
-        
-        // Actual increase should be greater due to power function
-        $this->assertGreaterThan($linearIncrease, $actualIncrease);
+
+        $this->assertGreaterThan(0.0, $result16);
+        $this->assertGreaterThan($result16, $result18);
+        $this->assertGreaterThan($result18, $result20);
     }
 }

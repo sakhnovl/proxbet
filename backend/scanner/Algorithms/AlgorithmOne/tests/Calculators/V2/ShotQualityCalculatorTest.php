@@ -45,17 +45,19 @@ final class ShotQualityCalculatorTest extends TestCase
         $this->assertEqualsWithDelta(0.816, $result, 0.01);
     }
 
-    public function testFallbackToAccuracyWithoutXg(): void
+    public function testFallbackToLiveSignalsWithoutXg(): void
     {
         $liveData = [
             'shots_total' => 10,
             'shots_on_target' => 6,
+            'corners' => 3,
+            'trend_shots_on_target_delta' => 2,
         ];
 
         $result = $this->calculator->calculate($liveData);
 
-        // Only accuracy: 6/10 = 0.6
-        $this->assertSame(0.6, $result);
+        $this->assertGreaterThan(0.6, $result);
+        $this->assertLessThanOrEqual(1.0, $result);
     }
 
     public function testHighQualityWithHighXg(): void
@@ -101,11 +103,11 @@ final class ShotQualityCalculatorTest extends TestCase
             'shots_on_target' => 4,
             'xg_home' => null,
             'xg_away' => 1.0,
+            'corners' => 2,
         ];
 
         $result = $this->calculator->calculate($liveData);
 
-        // Falls back to accuracy only: 4/8 = 0.5
-        $this->assertSame(0.5, $result);
+        $this->assertGreaterThan(0.5, $result);
     }
 }

@@ -46,7 +46,13 @@ final class AlgorithmOne implements AlgorithmInterface
      * Analyze match data and determine if a bet should be placed.
      * 
      * @param array<string,mixed> $matchData Must contain form_data, h2h_data, live_data
-     * @return array{bet:bool,reason:string,confidence:float,dual_run?:array<string,mixed>}
+     * @return array{
+     *   bet:bool,
+     *   reason:string,
+     *   confidence:float,
+     *   debug?:array<string,mixed>,
+     *   dual_run?:array<string,mixed>
+     * }
      */
     public function analyze(array $matchData): array
     {
@@ -73,7 +79,7 @@ final class AlgorithmOne implements AlgorithmInterface
     /**
      * Run legacy (v1) algorithm.
      * 
-     * @return array{bet:bool,reason:string,confidence:float}
+     * @return array{bet:bool,reason:string,confidence:float,debug:array<string,mixed>}
      */
     private function runLegacyMode(
         array $formData,
@@ -96,13 +102,29 @@ final class AlgorithmOne implements AlgorithmInterface
             'bet' => $decision['bet'],
             'reason' => $decision['reason'],
             'confidence' => $result['probability'],
+            'debug' => [
+                'algorithm_version' => Config::VERSION_LEGACY,
+                'gating_passed' => $decision['bet'],
+                'gating_reason' => $decision['bet'] ? '' : $decision['reason'],
+                'decision_reason' => $decision['reason'],
+                'probability' => $result['probability'],
+                'components' => [
+                    'form_score' => $result['form_score'],
+                    'h2h_score' => $result['h2h_score'],
+                    'live_score' => $result['live_score'],
+                ],
+                'red_flag' => null,
+                'red_flags' => [],
+                'penalties' => [],
+                'gating_context' => [],
+            ],
         ];
     }
 
     /**
      * Run V2 algorithm.
      * 
-     * @return array{bet:bool,reason:string,confidence:float}
+     * @return array{bet:bool,reason:string,confidence:float,debug:array<string,mixed>}
      */
     private function runV2Mode(
         array $formData,
@@ -117,13 +139,25 @@ final class AlgorithmOne implements AlgorithmInterface
             'bet' => $result['decision']['bet'],
             'reason' => $result['decision']['reason'] ?? 'unknown',
             'confidence' => $result['probability'],
+            'debug' => [
+                'algorithm_version' => Config::VERSION_V2,
+                'gating_passed' => $result['debug']['gating_passed'] ?? false,
+                'gating_reason' => $result['debug']['gating_reason'] ?? '',
+                'decision_reason' => $result['debug']['decision_reason'] ?? ($result['decision']['reason'] ?? 'unknown'),
+                'probability' => $result['debug']['probability'] ?? $result['probability'],
+                'components' => $result['components'],
+                'red_flag' => $result['debug']['red_flag'] ?? null,
+                'red_flags' => $result['debug']['red_flags'] ?? [],
+                'penalties' => $result['debug']['penalties'] ?? [],
+                'gating_context' => $result['debug']['gating_context'] ?? [],
+            ],
         ];
     }
 
     /**
      * Run both legacy and V2 algorithms in parallel for comparison.
      * 
-     * @return array{bet:bool,reason:string,confidence:float,dual_run:array<string,mixed>}
+     * @return array{bet:bool,reason:string,confidence:float,debug:array<string,mixed>,dual_run:array<string,mixed>}
      */
     private function runDualMode(
         array $formData,
@@ -142,12 +176,28 @@ final class AlgorithmOne implements AlgorithmInterface
             'bet' => $primary['decision']['bet'],
             'reason' => $primary['decision']['reason'] ?? 'unknown',
             'confidence' => $primary['probability'],
+            'debug' => [
+                'algorithm_version' => $version,
+                'gating_passed' => $primary['debug']['gating_passed'] ?? $primary['decision']['bet'],
+                'gating_reason' => $primary['debug']['gating_reason'] ?? '',
+                'decision_reason' => $primary['debug']['decision_reason'] ?? ($primary['decision']['reason'] ?? 'unknown'),
+                'probability' => $primary['debug']['probability'] ?? $primary['probability'],
+                'components' => $primary['components'] ?? [],
+                'red_flag' => $primary['debug']['red_flag'] ?? null,
+                'red_flags' => $primary['debug']['red_flags'] ?? [],
+                'penalties' => $primary['debug']['penalties'] ?? [],
+                'gating_context' => $primary['debug']['gating_context'] ?? [],
+            ],
             // Include dual-run comparison data for analysis
             'dual_run' => [
                 'primary_version' => $version,
                 'legacy_probability' => $dualResult['legacy']['probability'],
+                'legacy_decision' => $dualResult['legacy']['decision']['bet'] ? 'bet' : 'no_bet',
+                'legacy_reason' => $dualResult['legacy']['decision']['reason'],
                 'legacy_bet' => $dualResult['legacy']['decision']['bet'],
                 'v2_probability' => $dualResult['v2']['probability'],
+                'v2_decision' => $dualResult['v2']['decision']['bet'] ? 'bet' : 'no_bet',
+                'v2_reason' => $dualResult['v2']['decision']['reason'],
                 'v2_bet' => $dualResult['v2']['decision']['bet'],
                 'probability_diff' => $dualResult['comparison']['probability_diff'],
                 'decision_match' => $dualResult['comparison']['decision_match'],

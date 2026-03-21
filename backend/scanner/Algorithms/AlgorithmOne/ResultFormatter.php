@@ -39,12 +39,20 @@ final class ResultFormatter
     ): array {
         $algorithmVersion = $scores['algorithm_version'] ?? 1;
         
+        $hasDualRun = isset($scores['dual_run']) && is_array($scores['dual_run']);
         $algorithmData = null;
-        if ($algorithmVersion === 2) {
+        if ($algorithmVersion === 2 || $hasDualRun) {
+            $debugTrace = is_array($scores['debug_trace'] ?? null) ? $scores['debug_trace'] : [];
+
             $algorithmData = [
-                'algorithm_version' => 2,
+                'algorithm_version' => $algorithmVersion,
                 'components' => $scores['components'] ?? null,
-                'red_flag' => $scores['components']['red_flag'] ?? null,
+                'red_flag' => $debugTrace['red_flag'] ?? ($scores['components']['red_flag'] ?? null),
+                'gating_passed' => $debugTrace['gating_passed'] ?? false,
+                'gating_reason' => $debugTrace['gating_reason'] ?? '',
+                'decision_reason' => $debugTrace['decision_reason'] ?? $decision['reason'],
+                'probability' => $debugTrace['probability'] ?? $scores['probability'],
+                'debug_trace' => $debugTrace,
             ];
             
             if ($legacyScores !== null && $v2Scores !== null) {
@@ -53,6 +61,10 @@ final class ResultFormatter
                     'v2_probability' => $v2Scores['probability'] ?? 0.0,
                     'probability_diff' => ($v2Scores['probability'] ?? 0.0) - ($legacyScores['probability'] ?? 0.0),
                 ];
+            }
+
+            if ($hasDualRun) {
+                $algorithmData['dual_run'] = $scores['dual_run'];
             }
         }
         

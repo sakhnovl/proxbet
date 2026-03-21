@@ -23,11 +23,18 @@ final class TimePressureCalculator
         if ($minute < Config::MIN_MINUTE || $minute > Config::MAX_MINUTE) {
             return 0.0;
         }
-        
-        // Non-linear growth: (minute - 15) / 15
+
         $normalized = ($minute - Config::MIN_MINUTE) / (Config::MAX_MINUTE - Config::MIN_MINUTE);
-        
-        // Apply power function for non-linearity
-        return pow($normalized, 1.5);
+        $curve = pow($normalized, Config::getV2TimePressureCurveExponent());
+        $earlyWindowEnd = Config::getV2TimePressureEarlyWindowEnd();
+
+        if ($minute <= $earlyWindowEnd) {
+            $earlyProgress = ($minute - Config::MIN_MINUTE) / max(1, ($earlyWindowEnd - Config::MIN_MINUTE));
+            $earlyFloor = Config::getV2TimePressureEarlyFloorMax() * $earlyProgress;
+
+            return min(1.0, max($curve, $earlyFloor));
+        }
+
+        return min(1.0, $curve);
     }
 }

@@ -11,6 +11,31 @@ use Proxbet\Scanner\Algorithms\AlgorithmOne\Config;
 final class RedFlagChecker
 {
     /**
+     * Collect all active flags for the current live state.
+     *
+     * @param array<string,mixed> $liveData
+     * @return list<string>
+     */
+    public function collect(array $liveData, int $minute): array
+    {
+        $flags = [];
+
+        if ($this->hasLowAccuracy($liveData)) {
+            $flags[] = 'low_accuracy';
+        }
+
+        if ($this->hasIneffectivePressure($liveData)) {
+            $flags[] = 'ineffective_pressure';
+        }
+
+        if ($this->hasXgMismatch($liveData, $minute)) {
+            $flags[] = 'xg_mismatch';
+        }
+
+        return $flags;
+    }
+
+    /**
      * Check for red flags
      * 
      * @param array<string,mixed> $liveData
@@ -19,22 +44,7 @@ final class RedFlagChecker
      */
     public function check(array $liveData, int $minute): ?string
     {
-        // Check low_accuracy (blocker)
-        if ($this->hasLowAccuracy($liveData)) {
-            return 'low_accuracy';
-        }
-        
-        // Check ineffective_pressure (blocker)
-        if ($this->hasIneffectivePressure($liveData)) {
-            return 'ineffective_pressure';
-        }
-        
-        // Check xg_mismatch (amplifier, not blocker)
-        if ($this->hasXgMismatch($liveData, $minute)) {
-            return 'xg_mismatch';
-        }
-        
-        return null;
+        return $this->collect($liveData, $minute)[0] ?? null;
     }
     
     /**

@@ -84,7 +84,12 @@ final class DualRunService
     /**
      * Run legacy algorithm.
      *
-     * @return array{probability: float, decision: array{bet: bool, reason: string|null}, components: array<string,float>}
+     * @return array{
+     *   probability: float,
+     *   decision: array{bet: bool, reason: string|null},
+     *   components: array<string,float>,
+     *   debug: array<string,mixed>
+     * }
      */
     private function runLegacy(
         array $formData,
@@ -109,13 +114,25 @@ final class DualRunService
                 'h2h_score' => $legacyResult['h2h_score'],
                 'live_score' => $legacyResult['live_score'],
             ],
+            'debug' => [
+                'gating_passed' => $filterResult['bet'],
+                'gating_reason' => $filterResult['bet'] ? '' : ($filterResult['reason'] ?? ''),
+                'decision_reason' => $filterResult['reason'] ?? '',
+                'probability' => $legacyResult['probability'],
+                'red_flag' => null,
+            ],
         ];
     }
 
     /**
      * Run v2 algorithm.
      *
-     * @return array{probability: float, decision: array{bet: bool, reason: string|null}, components: array<string,mixed>}
+     * @return array{
+     *   probability: float,
+     *   decision: array{bet: bool, reason: string|null},
+     *   components: array<string,mixed>,
+     *   debug: array<string,mixed>
+     * }
      */
     private function runV2(
         array $formData,

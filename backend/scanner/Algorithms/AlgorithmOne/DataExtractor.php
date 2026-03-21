@@ -4,12 +4,20 @@ declare(strict_types=1);
 
 namespace Proxbet\Scanner\Algorithms\AlgorithmOne;
 
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\LeagueProfileService;
+
 /**
  * Extracts and structures data from match records for Algorithm 1 analysis.
  * Isolated version containing only Algorithm 1 specific extraction logic.
  */
 final class DataExtractor
 {
+    public function __construct(
+        private ?LeagueProfileService $leagueProfileService = null
+    ) {
+        $this->leagueProfileService ??= new LeagueProfileService();
+    }
+
     /**
      * Extract form data from match record (legacy).
      *
@@ -53,10 +61,7 @@ final class DataExtractor
 
         $hasData = $homeGoals !== null && $awayGoals !== null;
 
-        $weighted = null;
-        if ($weightedMetrics !== null && isset($weightedMetrics['weighted_form'])) {
-            $weighted = $weightedMetrics['weighted_form'];
-        }
+        $weighted = $this->normalizeWeightedForm($weightedMetrics);
 
         return [
             'home_goals' => $homeGoals ?? 0,
@@ -204,6 +209,8 @@ final class DataExtractor
      *   xg_total:float,
      *   yellow_cards_home:int,
      *   yellow_cards_away:int,
+     *   red_cards_home:int,
+     *   red_cards_away:int,
      *   trend_shots_total_delta:?int,
      *   trend_shots_on_target_delta:?int,
      *   trend_dangerous_attacks_delta:?int,
@@ -216,7 +223,28 @@ final class DataExtractor
      *   live_ascore:int,
      *   time_str:string,
      *   match_status:string,
-     *   table_avg:?float
+     *   table_avg:?float,
+     *   league_context:array{
+     *     country:string,
+     *     liga:string,
+     *     normalized_key:string,
+     *     category:string,
+     *     profile:array{
+     *       category:string,
+     *       min_attack_tempo:float,
+     *       missing_h2h_penalty:float,
+     *       xg_weight_multiplier:float,
+     *       probability_threshold:float
+     *     }
+     *   },
+     *   league_category:string,
+     *   league_profile:array{
+     *     category:string,
+     *     min_attack_tempo:float,
+     *     missing_h2h_penalty:float,
+     *     xg_weight_multiplier:float,
+     *     probability_threshold:float
+     *   }
      * }
      */
     public function extractLiveDataV2(array $match): array
@@ -251,8 +279,14 @@ final class DataExtractor
 
         $yellowCardsHome = $this->getIntOrNull($match, 'live_yellow_cards_home') ?? 0;
         $yellowCardsAway = $this->getIntOrNull($match, 'live_yellow_cards_away') ?? 0;
+        $redCardsHome = $this->getIntOrNull($match, 'live_red_cards_home') ?? 0;
+        $redCardsAway = $this->getIntOrNull($match, 'live_red_cards_away') ?? 0;
 
         $tableAvg = $this->getFloatOrNull($match, 'table_avg');
+        $leagueContext = $this->leagueProfileService->buildContext(
+            (string) ($match['country'] ?? ''),
+            (string) ($match['liga'] ?? '')
+        );
 
         return [
             'minute' => $minute,
@@ -273,6 +307,8 @@ final class DataExtractor
             'xg_total' => $xgTotal,
             'yellow_cards_home' => $yellowCardsHome,
             'yellow_cards_away' => $yellowCardsAway,
+            'red_cards_home' => $redCardsHome,
+            'red_cards_away' => $redCardsAway,
             'trend_shots_total_delta' => $this->getIntOrNull($match, 'live_trend_shots_total_delta'),
             'trend_shots_on_target_delta' => $this->getIntOrNull($match, 'live_trend_shots_on_target_delta'),
             'trend_dangerous_attacks_delta' => $this->getIntOrNull($match, 'live_trend_danger_attacks_delta'),
@@ -286,6 +322,9 @@ final class DataExtractor
             'time_str' => $timeStr,
             'match_status' => (string) ($match['match_status'] ?? ''),
             'table_avg' => $tableAvg,
+            'league_context' => $leagueContext,
+            'league_category' => $leagueContext['category'],
+            'league_profile' => $leagueContext['profile'],
         ];
     }
 
@@ -353,5 +392,61 @@ final class DataExtractor
         }
 
         return null;
+    }
+
+    /**
+     * Normalize weighted form payload from HtMetricsCalculator or legacy test fixtures.
+     *
+     * @param array<string,mixed>|null $weightedMetrics
+     * @return array{
+     *   home:array{attack:float,defense:float},
+     *   away:array{attack:float,defense:float},
+     *   score:float
+     * }|null
+     */
+    private function normalizeWeightedForm(?array $weightedMetrics): ?array
+    {
+        if ($weightedMetrics === null) {
+            return null;
+        }
+
+        $source = $weightedMetrics['weighted_form'] ?? $weightedMetrics;
+        if (!is_array($source)) {
+            return null;
+        }
+
+        $home = $source['home'] ?? null;
+        $away = $source['away'] ?? null;
+        $score = $source['score'] ?? $source['weighted_score'] ?? null;
+
+        if (!is_array($home) || !is_array($away) || !is_numeric($score)) {
+            return null;
+        }
+
+        $homeAttack = $home['attack'] ?? null;
+        $homeDefense = $home['defense'] ?? null;
+        $awayAttack = $away['attack'] ?? null;
+        $awayDefense = $away['defense'] ?? null;
+
+        if (
+            !is_numeric($homeAttack)
+            || !is_numeric($homeDefense)
+            || !is_numeric($awayAttack)
+            || !is_numeric($awayDefense)
+        ) {
+            return null;
+        }
+
+        return [
+            'home' => [
+                'attack' => (float) $homeAttack,
+                'defense' => (float) $homeDefense,
+            ],
+            'away' => [
+                'attack' => (float) $awayAttack,
+                'defense' => (float) $awayDefense,
+            ],
+            'score' => (float) $score,
+        ];
     }
 }
