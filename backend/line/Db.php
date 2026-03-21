@@ -321,19 +321,33 @@ final class Db
         $colList = implode(',', array_map(static fn(string $column): string => '`' . $column . '`', $fields));
         $placeholders = '(' . implode(',', array_fill(0, count($fields), '?')) . ')';
 
+        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $updateSql = '';
+        
         if ($updateFields !== []) {
-            $pairs = [];
-            foreach ($updateFields as $column) {
-                if ($column === 'sgi') {
-                    $pairs[] = '`sgi`=IF(`sgi` IS NULL, VALUES(`sgi`), `sgi`)';
-                    continue;
+            if ($driver === 'sqlite') {
+                // SQLite uses ON CONFLICT ... DO UPDATE
+                $pairs = [];
+                foreach ($updateFields as $column) {
+                    if ($column === 'sgi') {
+                        $pairs[] = '`sgi`=COALESCE(`sgi`, excluded.`sgi`)';
+                        continue;
+                    }
+                    $pairs[] = sprintf('`%s`=excluded.`%s`', $column, $column);
                 }
-
-                $pairs[] = sprintf('`%s`=VALUES(`%s`)', $column, $column);
+                $updateSql = ' ON CONFLICT(`evid`) DO UPDATE SET ' . implode(',', $pairs);
+            } else {
+                // MySQL uses ON DUPLICATE KEY UPDATE
+                $pairs = [];
+                foreach ($updateFields as $column) {
+                    if ($column === 'sgi') {
+                        $pairs[] = '`sgi`=IF(`sgi` IS NULL, VALUES(`sgi`), `sgi`)';
+                        continue;
+                    }
+                    $pairs[] = sprintf('`%s`=VALUES(`%s`)', $column, $column);
+                }
+                $updateSql = ' ON DUPLICATE KEY UPDATE ' . implode(',', $pairs);
             }
-
-            $updateSql = ' ON DUPLICATE KEY UPDATE ' . implode(',', $pairs);
         }
 
         // Process in batches of 100 for optimal performance
@@ -365,6 +379,20 @@ final class Db
                     continue;
                 }
 
+                // For SQLite, check which rows exist BEFORE insert
+                $existingEvids = [];
+                if ($driver === 'sqlite') {
+                    foreach ($validRows as $row) {
+                        $evid = $row[0]; // evid is first field
+                        $checkStmt = $pdo->prepare('SELECT COUNT(*) as cnt FROM matches WHERE evid = ?');
+                        $checkStmt->execute([$evid]);
+                        $exists = (int) $checkStmt->fetch(PDO::FETCH_ASSOC)['cnt'];
+                        if ($exists > 0) {
+                            $existingEvids[$evid] = true;
+                        }
+                    }
+                }
+
                 // Build multi-row INSERT
                 $valueSets = implode(',', array_fill(0, count($validRows), $placeholders));
                 $sql = sprintf('INSERT INTO `matches` (%s) VALUES %s%s', $colList, $valueSets, $updateSql);
@@ -376,19 +404,32 @@ final class Db
                 $affected = $stmt->rowCount();
                 $rowCount = count($validRows);
 
-                // If affected rows equals row count, all were inserted
-                // If affected rows is 2x row count, all were updated (MySQL returns 2 for updated rows)
-                // Otherwise, it's a mix
-                if ($affected === $rowCount) {
-                    $inserted += $rowCount;
-                } elseif ($affected === $rowCount * 2) {
-                    $updated += $rowCount;
+                if ($driver === 'sqlite') {
+                    // SQLite: Use pre-checked existence
+                    foreach ($validRows as $row) {
+                        $evid = $row[0];
+                        if (isset($existingEvids[$evid])) {
+                            $updated++;
+                        } else {
+                            $inserted++;
+                        }
+                    }
                 } else {
-                    // Mixed case: estimate based on affected rows
-                    $updatedInBatch = (int) floor($affected / 2);
-                    $insertedInBatch = $rowCount - $updatedInBatch;
-                    $inserted += max(0, $insertedInBatch);
-                    $updated += $updatedInBatch;
+                    // MySQL: Use rowCount behavior
+                    // If affected rows equals row count, all were inserted
+                    // If affected rows is 2x row count, all were updated (MySQL returns 2 for updated rows)
+                    // Otherwise, it's a mix
+                    if ($affected === $rowCount) {
+                        $inserted += $rowCount;
+                    } elseif ($affected === $rowCount * 2) {
+                        $updated += $rowCount;
+                    } else {
+                        // Mixed case: estimate based on affected rows
+                        $updatedInBatch = (int) floor($affected / 2);
+                        $insertedInBatch = $rowCount - $updatedInBatch;
+                        $inserted += max(0, $insertedInBatch);
+                        $updated += $updatedInBatch;
+                    }
                 }
             }
 

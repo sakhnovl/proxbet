@@ -40,6 +40,18 @@ final class ApiEndpointsTest extends TestCase
                 home_cf REAL,
                 draw_cf REAL,
                 away_cf REAL,
+                ht_match_goals_1 INTEGER,
+                ht_match_missed_goals_1 INTEGER,
+                ht_match_goals_1_avg REAL,
+                ht_match_missed_1_avg REAL,
+                ht_match_goals_2 INTEGER,
+                ht_match_missed_goals_2 INTEGER,
+                ht_match_goals_2_avg REAL,
+                ht_match_missed_2_avg REAL,
+                live_shots_on_target_home REAL,
+                live_shots_on_target_away REAL,
+                live_shots_off_target_home REAL,
+                live_shots_off_target_away REAL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ');
