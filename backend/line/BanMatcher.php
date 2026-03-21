@@ -36,7 +36,7 @@ final class BanMatcher
         }
 
         $fieldsMatched = [];
-        $hasAnyRuleField = false;
+        $nonNullBanFields = 0;
 
         foreach (['country', 'liga', 'home', 'away'] as $field) {
             $banVal = self::toNullableString($banRow[$field] ?? null);
@@ -44,22 +44,23 @@ final class BanMatcher
                 continue;
             }
 
-            $hasAnyRuleField = true;
+            $nonNullBanFields++;
             $matchVal = self::toNullableString($match[$field] ?? null) ?? '';
-            if ($matchVal === '') {
-                continue;
+            
+            // If match field is empty or doesn't match, this ban doesn't apply
+            if ($matchVal === '' || !self::fieldMatches($banVal, $matchVal)) {
+                return ['matched' => false];
             }
 
-            if (self::fieldMatches($banVal, $matchVal)) {
-                $fieldsMatched[] = $field;
-            }
+            $fieldsMatched[] = $field;
         }
 
         // If rule has no filled fields, treat as non-match (to avoid banning everything by accident)
-        if (!$hasAnyRuleField || $fieldsMatched === []) {
+        if ($nonNullBanFields === 0) {
             return ['matched' => false];
         }
 
+        // All non-null ban fields matched
         return [
             'matched' => true,
             'fields' => $fieldsMatched,
@@ -115,10 +116,13 @@ final class BanMatcher
                 $s = $norm;
                 $s = preg_replace('/\p{Mn}+/u', '', $s) ?? $s;
             }
+        } else {
+            // Fallback: manual transliteration for common accented characters
+            $s = self::removeAccents($s);
         }
 
         // keep common apostrophes as "joiners" (helps: "O'Higgins" vs "OHiggins")
-        $s = str_replace(["'", '’', '‘', '`', '´'], '', $s);
+        $s = str_replace(["'", "'", "'", '`', '´'], '', $s);
 
         // replace punctuation/separators with spaces (keep letters+numbers)
         $s = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $s) ?? $s;
@@ -147,6 +151,20 @@ final class BanMatcher
         }
 
         return trim(implode(' ', $filtered));
+    }
+
+    private static function removeAccents(string $s): string
+    {
+        $replacements = [
+            'à' => 'a', 'á' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a', 'å' => 'a',
+            'è' => 'e', 'é' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'ì' => 'i', 'í' => 'i', 'î' => 'i', 'ï' => 'i',
+            'ò' => 'o', 'ó' => 'o', 'ô' => 'o', 'õ' => 'o', 'ö' => 'o', 'ø' => 'o',
+            'ù' => 'u', 'ú' => 'u', 'û' => 'u', 'ü' => 'u',
+            'ý' => 'y', 'ÿ' => 'y',
+            'ñ' => 'n', 'ç' => 'c'
+        ];
+        return str_replace(array_keys($replacements), array_values($replacements), $s);
     }
 
     /** @return array<int,string> */

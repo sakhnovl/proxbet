@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/line/env.php';
 require_once __DIR__ . '/line/logger.php';
-require_once __DIR__ . '/line/db.php';
+require_once __DIR__ . '/line/Db.php';
 require_once __DIR__ . '/scanner/BetMessageRepository.php';
 
 use Proxbet\Line\Env;

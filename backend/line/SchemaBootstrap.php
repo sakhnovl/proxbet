@@ -126,6 +126,27 @@ final class SchemaBootstrap
     /** @return array<int,string> */
     public static function getTableColumns(PDO $pdo, string $table): array
     {
+        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        
+        if ($driver === 'sqlite') {
+            // SQLite uses PRAGMA table_info
+            try {
+                $stmt = $pdo->prepare('PRAGMA table_info(' . $pdo->quote($table) . ')');
+                $stmt->execute();
+            } catch (\Throwable) {
+                return [];
+            }
+            
+            $cols = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                if (is_array($row) && isset($row['name']) && is_string($row['name'])) {
+                    $cols[] = $row['name'];
+                }
+            }
+            return $cols;
+        }
+        
+        // MySQL/MariaDB uses SHOW COLUMNS
         $stmt = $pdo->prepare('SHOW COLUMNS FROM `' . str_replace('`', '``', $table) . '`');
         try {
             $stmt->execute();
