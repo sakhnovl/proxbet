@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Proxbet\Core;
 
-use Proxbet\Line\Logger;
 use Proxbet\Core\Exceptions\ApiException;
 
 /**
@@ -65,12 +64,16 @@ final class HttpClient
                 $lastError = 'HTTP status ' . $lastStatus;
             } catch (\Throwable $e) {
                 $lastError = $e->getMessage();
-                Logger::error('HTTP request attempt failed', [
-                    'attempt' => $attempt,
-                    'max_retries' => $maxRetries,
-                    'error' => $e->getMessage(),
-                    'url' => $url,
-                ]);
+                
+                // Optional logging if Logger is available
+                if (class_exists('Proxbet\Line\Logger')) {
+                    \Proxbet\Line\Logger::error('HTTP request attempt failed', [
+                        'attempt' => $attempt,
+                        'max_retries' => $maxRetries,
+                        'error' => $e->getMessage(),
+                        'url' => $url,
+                    ]);
+                }
             }
 
             // Don't sleep after last attempt
