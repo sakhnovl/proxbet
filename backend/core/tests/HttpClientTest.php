@@ -13,140 +13,126 @@ use Proxbet\Core\Exceptions\ApiException;
  */
 final class HttpClientTest extends TestCase
 {
-    private HttpClient $client;
-
-    protected function setUp(): void
-    {
-        $this->client = new HttpClient();
-    }
-
     public function testGetRequestSuccess(): void
     {
         // Test with a reliable endpoint
-        $response = $this->client->get('https://httpbin.org/get');
+        $response = HttpClient::getWithRetry('https://httpbin.org/get', 10000, 1);
         
         $this->assertIsArray($response);
-        $this->assertArrayHasKey('url', $response);
+        $this->assertTrue($response['ok']);
+        $this->assertEquals(200, $response['status']);
+        $this->assertStringContainsString('httpbin.org', $response['body']);
     }
 
-    public function testPostRequestSuccess(): void
+    public function testGetJsonSuccess(): void
     {
-        $data = ['test' => 'value', 'number' => 42];
-        $response = $this->client->post('https://httpbin.org/post', $data);
+        $response = HttpClient::getJson('https://httpbin.org/json', 10000, 1);
         
         $this->assertIsArray($response);
-        $this->assertArrayHasKey('json', $response);
-        $this->assertEquals('value', $response['json']['test']);
-        $this->assertEquals(42, $response['json']['number']);
+        $this->assertNotEmpty($response);
     }
 
-    public function testRequestWithCustomHeaders(): void
+    public function testRequestWithCustomUserAgent(): void
     {
-        $headers = [
-            'X-Custom-Header' => 'test-value',
-            'X-Request-ID' => 'test-123',
-        ];
+        $response = HttpClient::getWithRetry('https://httpbin.org/user-agent', 10000, 1, 'CustomAgent/1.0');
         
-        $response = $this->client->get('https://httpbin.org/headers', $headers);
-        
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('headers', $response);
-        $this->assertArrayHasKey('X-Custom-Header', $response['headers']);
+        $this->assertTrue($response['ok']);
+        $this->assertStringContainsString('CustomAgent', $response['body']);
     }
 
     public function testRequestWithTimeout(): void
     {
-        $client = new HttpClient(timeout: 1);
+        // Short timeout should fail on delayed endpoint
+        $response = HttpClient::getWithRetry('https://httpbin.org/delay/10', 1000, 0);
         
-        // This should timeout
-        $this->expectException(ApiException::class);
-        $this->expectExceptionMessageMatches('/timeout|timed out/i');
-        
-        $client->get('https://httpbin.org/delay/5');
+        $this->assertFalse($response['ok']);
+        $this->assertNotNull($response['error']);
     }
 
     public function testInvalidUrlThrowsException(): void
     {
         $this->expectException(ApiException::class);
         
-        $this->client->get('not-a-valid-url');
+        HttpClient::getJson('not-a-valid-url', 5000, 0);
     }
 
     public function testNonExistentDomainThrowsException(): void
     {
         $this->expectException(ApiException::class);
         
-        $this->client->get('https://this-domain-definitely-does-not-exist-12345.com');
+        HttpClient::getJson('https://this-domain-definitely-does-not-exist-12345.com', 5000, 0);
     }
 
     public function testRetryLogicOn500Error(): void
     {
-        // httpbin.org/status/500 returns 500 error
-        $this->expectException(ApiException::class);
+        // httpbin.org/status/500 returns 500 error, should retry
+        $response = HttpClient::getWithRetry('https://httpbin.org/status/500', 5000, 2);
         
-        $client = new HttpClient(maxRetries: 2, retryDelay: 100);
-        $client->get('https://httpbin.org/status/500');
+        $this->assertFalse($response['ok']);
+        $this->assertEquals(500, $response['status']);
+        $this->assertGreaterThan(1, $response['attempts']);
     }
 
     public function testUserAgentIsSet(): void
     {
-        $response = $this->client->get('https://httpbin.org/user-agent');
+        $response = HttpClient::getWithRetry('https://httpbin.org/user-agent', 10000, 1);
         
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('user-agent', $response);
-        $this->assertStringContainsString('Proxbet', $response['user-agent']);
+        $this->assertTrue($response['ok']);
+        $this->assertStringContainsString('proxbets', $response['body']);
     }
 
     public function testJsonResponseParsing(): void
     {
-        $response = $this->client->get('https://httpbin.org/json');
+        $response = HttpClient::getJson('https://httpbin.org/json', 10000, 1);
         
         $this->assertIsArray($response);
-        // httpbin.org/json returns a sample JSON object
         $this->assertNotEmpty($response);
     }
 
-    public function testPostWithEmptyBody(): void
+    public function testGetJsonThrowsOnInvalidJson(): void
     {
-        $response = $this->client->post('https://httpbin.org/post', []);
+        $this->expectException(ApiException::class);
+        $this->expectExceptionMessageMatches('/not valid JSON/i');
         
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('json', $response);
+        // This endpoint returns HTML, not JSON
+        HttpClient::getJson('https://httpbin.org/html', 10000, 0);
     }
 
     public function testConnectionReuseWithKeepAlive(): void
     {
         // Make multiple requests to test keep-alive
-        $response1 = $this->client->get('https://httpbin.org/get');
-        $response2 = $this->client->get('https://httpbin.org/get');
+        $response1 = HttpClient::getWithRetry('https://httpbin.org/get', 10000, 1);
+        $response2 = HttpClient::getWithRetry('https://httpbin.org/get', 10000, 1);
         
-        $this->assertIsArray($response1);
-        $this->assertIsArray($response2);
+        $this->assertTrue($response1['ok']);
+        $this->assertTrue($response2['ok']);
     }
 
     public function testResponseStatusCodeHandling(): void
     {
-        // Test 404 error
-        $this->expectException(ApiException::class);
-        $this->expectExceptionMessageMatches('/404|not found/i');
+        // Test 404 error - should not retry (client error)
+        $response = HttpClient::getWithRetry('https://httpbin.org/status/404', 5000, 2);
         
-        $this->client->get('https://httpbin.org/status/404');
+        $this->assertFalse($response['ok']);
+        $this->assertEquals(404, $response['status']);
+        $this->assertEquals(1, $response['attempts']); // Should not retry on 404
     }
 
     public function testLargeResponseHandling(): void
     {
         // Request a large response (10KB)
-        $response = $this->client->get('https://httpbin.org/bytes/10240');
+        $response = HttpClient::getWithRetry('https://httpbin.org/bytes/10240', 10000, 1);
         
-        $this->assertIsArray($response);
+        $this->assertTrue($response['ok']);
+        $this->assertGreaterThan(10000, strlen($response['body']));
     }
 
     public function testRedirectFollowing(): void
     {
         // httpbin.org/redirect/1 redirects once
-        $response = $this->client->get('https://httpbin.org/redirect/1');
+        $response = HttpClient::getWithRetry('https://httpbin.org/redirect/1', 10000, 1);
         
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('url', $response);
+        $this->assertTrue($response['ok']);
+        $this->assertEquals(200, $response['status']);
     }
 }
