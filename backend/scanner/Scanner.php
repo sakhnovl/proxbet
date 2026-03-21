@@ -16,6 +16,9 @@ final class Scanner
     private const ALGORITHM_ONE_ID = 1;
     private const ALGORITHM_TWO_ID = 2;
     private const ALGORITHM_THREE_ID = 3;
+    /** @var array<string,int> */
+    private array $algorithmOneRejectSummary = [];
+    private int $algorithmOneAcceptedSignals = 0;
 
     public function __construct(
         private DataExtractor $extractor,
@@ -29,10 +32,19 @@ final class Scanner
     }
 
     /**
-     * @return array{total:int,analyzed:int,signals:int,results:array<int,array<string,mixed>>}
+     * @return array{
+     *   total:int,
+     *   analyzed:int,
+     *   signals:int,
+     *   results:array<int,array<string,mixed>>,
+     *   algorithm_one_debug:array{accepted:int,rejected:array<string,int>}
+     * }
      */
     public function scan(): array
     {
+        $this->algorithmOneRejectSummary = [];
+        $this->algorithmOneAcceptedSignals = 0;
+
         $matches = $this->extractor->getActiveMatches();
         $total = count($matches);
         $analyzed = 0;
@@ -71,11 +83,20 @@ final class Scanner
             'signals' => $signals,
         ]);
 
+        Logger::info('Scanner algorithm 1 rejection summary', [
+            'accepted' => $this->algorithmOneAcceptedSignals,
+            'rejected' => $this->algorithmOneRejectSummary,
+        ]);
+
         return [
             'total' => $total,
             'analyzed' => $analyzed,
             'signals' => $signals,
             'results' => $results,
+            'algorithm_one_debug' => [
+                'accepted' => $this->algorithmOneAcceptedSignals,
+                'rejected' => $this->algorithmOneRejectSummary,
+            ],
         ];
     }
 
@@ -150,11 +171,25 @@ final class Scanner
             'bet' => $algorithmOneResult['bet'],
             'reason' => $algorithmOneResult['reason'],
         ];
+        $algorithmOneDebug = is_array($algorithmOneResult['debug'] ?? null)
+            ? $algorithmOneResult['debug']
+            : [];
         
         // Build scores structure for compatibility with formatter and logging
         $scores = [
             'probability' => $algorithmOneResult['confidence'],
             'algorithm_version' => $algorithmVersion,
+            'form_score' => $algorithmOneDebug['components']['form_score']
+                ?? $algorithmOneDebug['components']['probability_breakdown']['form_score']
+                ?? null,
+            'h2h_score' => $algorithmOneDebug['components']['h2h_score']
+                ?? $algorithmOneDebug['components']['probability_breakdown']['h2h_score']
+                ?? null,
+            'live_score' => $algorithmOneDebug['components']['live_score']
+                ?? $algorithmOneDebug['components']['probability_breakdown']['live_score_adjusted']
+                ?? null,
+            'components' => $algorithmOneDebug['components'] ?? null,
+            'debug_trace' => $algorithmOneDebug,
         ];
         
         // Handle dual-run data if available
@@ -164,6 +199,7 @@ final class Scanner
             $dualRun = $algorithmOneResult['dual_run'];
             $legacyScores = ['probability' => $dualRun['legacy_probability']];
             $v2Scores = ['probability' => $dualRun['v2_probability']];
+            $scores['dual_run'] = $dualRun;
         }
         
         $algorithmTwoData = $this->extractor->extractAlgorithmTwoData($match);
@@ -172,8 +208,23 @@ final class Scanner
         $algorithmTwoDecision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
         $algorithmThreeDecision = $this->filter->shouldBetAlgorithmThree($algorithmThreeData);
 
-        // Save algorithm version to database for Algorithm 1
-        $this->extractor->updateAlgorithmData($base['match_id'], $algorithmVersion, null);
+        // Save Algorithm 1 debug payload to database
+        $algorithmOneStoragePayload = ($algorithmVersion === 2 || isset($scores['dual_run']))
+            ? [
+                'algorithm_version' => $algorithmVersion,
+                'gating_passed' => $algorithmOneDebug['gating_passed'] ?? false,
+                'gating_reason' => $algorithmOneDebug['gating_reason'] ?? '',
+                'decision_reason' => $algorithmOneDebug['decision_reason'] ?? $algorithmOneDecision['reason'],
+                'probability' => $algorithmOneResult['confidence'],
+                'components' => $algorithmOneDebug['components'] ?? [],
+                'red_flag' => $algorithmOneDebug['red_flag'] ?? null,
+                'red_flags' => $algorithmOneDebug['red_flags'] ?? [],
+                'penalties' => $algorithmOneDebug['penalties'] ?? [],
+                'gating_context' => $algorithmOneDebug['gating_context'] ?? [],
+                'dual_run' => $scores['dual_run'] ?? null,
+            ]
+            : null;
+        $this->extractor->updateAlgorithmData($base['match_id'], $algorithmVersion, $algorithmOneStoragePayload);
 
         if (!$formData['has_data'] || !$h2hData['has_data']) {
             Logger::info('Scanner algorithm 1 skipped because statistics are incomplete', [
@@ -184,11 +235,14 @@ final class Scanner
                 'has_h2h' => $h2hData['has_data'],
                 'reason' => $algorithmOneDecision['reason'],
                 'algorithm_version' => $algorithmVersion,
+                'gating_reason' => $algorithmOneDebug['gating_reason'] ?? '',
             ]);
         }
         
         // Log rejection reasons
         if (!$algorithmOneDecision['bet']) {
+            $this->incrementAlgorithmOneRejectReason($algorithmOneDecision['reason']);
+
             Logger::info('Scanner algorithm 1 rejected signal', [
                 'match_id' => $base['match_id'],
                 'home' => $base['home'],
@@ -197,7 +251,16 @@ final class Scanner
                 'reason' => $algorithmOneDecision['reason'],
                 'probability' => $scores['probability'],
                 'algorithm_version' => $algorithmVersion,
+                'gating_passed' => $algorithmOneDebug['gating_passed'] ?? false,
+                'gating_reason' => $algorithmOneDebug['gating_reason'] ?? '',
+                'red_flag' => $algorithmOneDebug['red_flag'] ?? null,
+                'red_flags' => $algorithmOneDebug['red_flags'] ?? [],
+                'penalties' => $algorithmOneDebug['penalties'] ?? [],
+                'gating_context' => $algorithmOneDebug['gating_context'] ?? [],
+                'components' => $algorithmOneDebug['components'] ?? [],
             ]);
+        } else {
+            $this->algorithmOneAcceptedSignals++;
         }
 
         if (!$algorithmTwoData['has_data']) {
@@ -249,5 +312,15 @@ final class Scanner
             'home' => (string) ($match['home'] ?? ''),
             'away' => (string) ($match['away'] ?? ''),
         ];
+    }
+
+    private function incrementAlgorithmOneRejectReason(string $reason): void
+    {
+        $normalizedReason = trim($reason);
+        if ($normalizedReason === '') {
+            $normalizedReason = 'unknown';
+        }
+
+        $this->algorithmOneRejectSummary[$normalizedReason] = ($this->algorithmOneRejectSummary[$normalizedReason] ?? 0) + 1;
     }
 }

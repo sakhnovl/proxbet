@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Scanner\Tests;
 
 use PHPUnit\Framework\TestCase;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\CardFactorCalculator;
 use Proxbet\Scanner\DataExtractor;
 use PDO;
 
@@ -53,6 +54,8 @@ final class DataExtractorTest extends TestCase
                 live_xg_away REAL,
                 live_yellow_cards_home INTEGER,
                 live_yellow_cards_away INTEGER,
+                live_red_cards_home INTEGER,
+                live_red_cards_away INTEGER,
                 live_ht_hscore INTEGER,
                 live_ht_ascore INTEGER,
                 live_hscore INTEGER,
@@ -71,7 +74,10 @@ final class DataExtractorTest extends TestCase
                 table_missed_2 INTEGER,
                 table_avg REAL,
                 algorithm_version INTEGER,
-                live_score_components TEXT
+                live_score_components TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                live_updated_at TEXT
             )
         ');
     }
@@ -130,6 +136,52 @@ final class DataExtractorTest extends TestCase
         $this->assertTrue($result['has_data']);
         $this->assertEquals(4, $result['home_goals']);
         $this->assertEquals(2, $result['away_goals']);
+    }
+
+    public function testExtractFormDataV2SupportsCurrentHtMetricsFormat(): void
+    {
+        $match = [
+            'ht_match_goals_1' => 4,
+            'ht_match_goals_2' => 3,
+        ];
+
+        $weightedMetrics = [
+            'home' => ['attack' => 0.8, 'defense' => 0.3],
+            'away' => ['attack' => 0.6, 'defense' => 0.4],
+            'weighted_score' => 0.75,
+        ];
+
+        $result = $this->extractor->extractFormDataV2($match, $weightedMetrics);
+
+        $this->assertTrue($result['has_data']);
+        $this->assertNotNull($result['weighted']);
+        $this->assertSame(0.75, $result['weighted']['score']);
+        $this->assertSame(0.8, $result['weighted']['home']['attack']);
+        $this->assertSame(0.4, $result['weighted']['away']['defense']);
+    }
+
+    public function testExtractFormDataV2SupportsLegacyWeightedFormWrapper(): void
+    {
+        $match = [
+            'ht_match_goals_1' => 2,
+            'ht_match_goals_2' => 1,
+        ];
+
+        $weightedMetrics = [
+            'weighted_form' => [
+                'home' => ['attack' => 0.7, 'defense' => 0.2],
+                'away' => ['attack' => 0.5, 'defense' => 0.6],
+                'score' => 0.68,
+            ],
+        ];
+
+        $result = $this->extractor->extractFormDataV2($match, $weightedMetrics);
+
+        $this->assertTrue($result['has_data']);
+        $this->assertNotNull($result['weighted']);
+        $this->assertSame(0.68, $result['weighted']['score']);
+        $this->assertSame(0.7, $result['weighted']['home']['attack']);
+        $this->assertSame(0.6, $result['weighted']['away']['defense']);
     }
 
     public function testExtractAlgorithmTwoData(): void
@@ -207,6 +259,8 @@ final class DataExtractorTest extends TestCase
         $match = [
             'time' => '60:00',
             'match_status' => '2H',
+            'country' => 'England',
+            'liga' => 'Premier League',
             'live_shots_on_target_home' => 8,
             'live_shots_on_target_away' => 5,
             'live_shots_off_target_home' => 6,
@@ -219,6 +273,8 @@ final class DataExtractorTest extends TestCase
             'live_xg_away' => 1.3,
             'live_yellow_cards_home' => 3,
             'live_yellow_cards_away' => 2,
+            'live_red_cards_home' => 1,
+            'live_red_cards_away' => 0,
             'live_ht_hscore' => 1,
             'live_ht_ascore' => 1,
             'live_hscore' => 2,
@@ -233,6 +289,30 @@ final class DataExtractorTest extends TestCase
         $this->assertEquals(13, $result['shots_on_target']);
         $this->assertEqualsWithDelta(3.4, $result['xg_total'], 0.001);
         $this->assertEquals(2.75, $result['table_avg']);
+        $this->assertSame(1, $result['red_cards_home']);
+        $this->assertSame(0, $result['red_cards_away']);
+        $this->assertSame('top-tier', $result['league_category']);
+        $this->assertSame(0.55, $result['league_profile']['probability_threshold']);
+    }
+
+    public function testCardFactorCalculatorWorksWithExtractedLiveDataV2(): void
+    {
+        $match = [
+            'time' => '25:00',
+            'match_status' => '1H',
+            'country' => 'Italy',
+            'liga' => 'Primavera U20',
+            'live_yellow_cards_home' => 1,
+            'live_yellow_cards_away' => 0,
+            'live_red_cards_home' => 0,
+            'live_red_cards_away' => 1,
+        ];
+
+        $liveData = $this->extractor->extractLiveDataV2($match);
+        $result = (new CardFactorCalculator())->calculate($liveData);
+
+        $this->assertSame(0.03, $result);
+        $this->assertSame('youth', $liveData['league_category']);
     }
 
     public function testExtractAlgorithmThreeData(): void
@@ -291,5 +371,39 @@ final class DataExtractorTest extends TestCase
 
         $decoded = json_decode($row['live_score_components'], true);
         $this->assertEquals(0.75, $decoded['form_score']);
+    }
+
+    public function testUpdateAlgorithmDataPersistsDualRunPayload(): void
+    {
+        $this->pdo->exec('
+            INSERT INTO matches (evid, time, match_status, home, away)
+            VALUES ("test456", "27:00", "1H", "Milan", "Inter")
+        ');
+
+        $payload = [
+            'algorithm_version' => 1,
+            'probability' => 0.64,
+            'dual_run' => [
+                'legacy_probability' => 0.64,
+                'legacy_decision' => 'bet',
+                'v2_probability' => 0.58,
+                'v2_decision' => 'no_bet',
+                'divergence_level' => 'high',
+            ],
+        ];
+
+        $result = $this->extractor->updateAlgorithmData(1, 1, $payload);
+
+        $this->assertTrue($result);
+
+        $stmt = $this->pdo->query('SELECT algorithm_version, live_score_components FROM matches WHERE id = 1');
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertEquals(1, $row['algorithm_version']);
+        $decoded = json_decode((string) $row['live_score_components'], true);
+
+        $this->assertSame('bet', $decoded['dual_run']['legacy_decision']);
+        $this->assertSame('no_bet', $decoded['dual_run']['v2_decision']);
+        $this->assertSame('high', $decoded['dual_run']['divergence_level']);
     }
 }

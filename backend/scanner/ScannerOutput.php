@@ -22,7 +22,13 @@ class ScannerOutput
     /**
      * Output results in formatted text.
      *
-     * @param array{total:int,analyzed:int,signals:int,results:array<int,array<string,mixed>>} $result
+     * @param array{
+     *   total:int,
+     *   analyzed:int,
+     *   signals:int,
+     *   results:array<int,array<string,mixed>>,
+     *   algorithm_one_debug?:array{accepted:int,rejected:array<string,int>}
+     * } $result
      */
     public static function formatted(array $result, bool $verbose): void
     {
@@ -35,6 +41,8 @@ class ScannerOutput
         echo "Проанализировано: {$result['analyzed']}" . PHP_EOL;
         echo "Сигналов на ставку: {$result['signals']}" . PHP_EOL;
         echo PHP_EOL;
+
+        self::displayAlgorithmOneDebugSummary($result['algorithm_one_debug'] ?? null);
 
         if (empty($result['results'])) {
             echo 'Нет активных матчей для анализа.' . PHP_EOL;
@@ -52,7 +60,7 @@ class ScannerOutput
             }
         }
 
-        if (!empty($signals)) {
+        if ($signals !== []) {
             echo str_repeat('=', 80) . PHP_EOL;
             echo 'СИГНАЛЫ НА СТАВКУ (' . $result['signals'] . ')' . PHP_EOL;
             echo str_repeat('=', 80) . PHP_EOL;
@@ -63,7 +71,7 @@ class ScannerOutput
             }
         }
 
-        if ($verbose && !empty($others)) {
+        if ($verbose && $others !== []) {
             echo str_repeat('=', 80) . PHP_EOL;
             echo 'ОСТАЛЬНЫЕ РЕЗУЛЬТАТЫ (' . count($others) . ')' . PHP_EOL;
             echo str_repeat('=', 80) . PHP_EOL;
@@ -116,6 +124,14 @@ class ScannerOutput
             . $match['stats']['dangerous_attacks'] . ', угловые ' . $match['stats']['corners'] . PHP_EOL;
         echo "   Форма 1T: дома {$match['form_data']['home_goals']}/5, гости {$match['form_data']['away_goals']}/5" . PHP_EOL;
         echo "   H2H 1T: дома {$match['h2h_data']['home_goals']}/5, гости {$match['h2h_data']['away_goals']}/5" . PHP_EOL;
+
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+        if ((int) ($algorithmData['algorithm_version'] ?? 0) === 2) {
+            echo '   Debug A1 v2: gating=' . (($algorithmData['gating_passed'] ?? false) ? 'pass' : 'fail')
+                . ', gating_reason=' . (($algorithmData['gating_reason'] ?? '') === '' ? '-' : $algorithmData['gating_reason'])
+                . ', red_flag=' . (($algorithmData['red_flag'] ?? null) ?? '-') . PHP_EOL;
+        }
+
         echo "   Решение: {$match['decision']['reason']}" . PHP_EOL;
         echo PHP_EOL;
     }
@@ -147,5 +163,31 @@ class ScannerOutput
             . ', away att ' . sprintf('%.2f', (float) ($algorithmData['away_attack_ratio'] ?? 0))
             . ', home def ' . sprintf('%.2f', (float) ($algorithmData['home_defense_ratio'] ?? 0)) . PHP_EOL;
         echo '   Правило: ' . $triggeredRule . PHP_EOL;
+    }
+
+    /**
+     * @param array{accepted:int,rejected:array<string,int>}|null $summary
+     */
+    private static function displayAlgorithmOneDebugSummary(?array $summary): void
+    {
+        if ($summary === null) {
+            return;
+        }
+
+        echo 'Algorithm 1 debug:' . PHP_EOL;
+        echo '  accepted: ' . (int) ($summary['accepted'] ?? 0) . PHP_EOL;
+
+        $rejected = is_array($summary['rejected'] ?? null) ? $summary['rejected'] : [];
+        if ($rejected === []) {
+            echo '  rejected: 0' . PHP_EOL;
+            echo PHP_EOL;
+            return;
+        }
+
+        echo '  rejected reasons:' . PHP_EOL;
+        foreach ($rejected as $reason => $count) {
+            echo '    - ' . $reason . ': ' . $count . PHP_EOL;
+        }
+        echo PHP_EOL;
     }
 }
