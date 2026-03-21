@@ -31,30 +31,17 @@ final class GeminiMatchAnalyzerTest extends TestCase
         $analyzer->analyze([]);
     }
 
-    public function testBuildPromptForAlgorithmOne(): void
+    public function testBuildPromptRejectsLegacyAlgorithmOnePath(): void
     {
         $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
-        $context = [
-            'algorithm_id' => 1,
-            'home' => 'Команда А',
-            'away' => 'Команда Б',
-            'liga' => 'Премьер-лига',
-            'time' => '25:30',
-            'scanner_probability' => 75,
-            'scanner_bet' => 'yes',
-        ];
-
-        // Используем рефлексию для тестирования приватного метода
         $reflection = new \ReflectionClass($analyzer);
         $method = $reflection->getMethod('buildPrompt');
         $method->setAccessible(true);
 
-        $prompt = $method->invoke($analyzer, $context);
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('AlgorithmOne prompt is handled by dedicated explain mode');
 
-        $this->assertStringContainsString('Команда А', $prompt);
-        $this->assertStringContainsString('Команда Б', $prompt);
-        $this->assertStringContainsString('75%', $prompt);
-        $this->assertStringContainsString('Вердикт:', $prompt);
+        $method->invoke($analyzer, ['algorithm_id' => 1]);
     }
 
     public function testBuildPromptForAlgorithmTwo(): void

@@ -165,7 +165,7 @@ class AnalysisCallbackHandler
         string $apiBase
     ): bool {
         if (is_array($existing) && (string) ($existing['status'] ?? '') === 'completed') {
-            if (deliverPrivateMessage($apiBase, $telegramUserId, buildAnalysisDeliveryMessage((string) ($existing['response_text'] ?? ''), $user))) {
+            if (deliverPrivateMessage($apiBase, $telegramUserId, buildAnalysisDeliveryMessage((string) ($existing['response_text'] ?? ''), $user), true)) {
                 tgAnswerCallback($apiBase, $cbId, 'Отправил сохраненный анализ в личные сообщения.');
             } else {
                 tgAnswerCallback($apiBase, $cbId, 'Откройте бота и нажмите /start, затем повторите запрос.', true);
@@ -226,7 +226,7 @@ class AnalysisCallbackHandler
             $this->saveSuccessfulAnalysis($telegramUserId, $matchId, $context, $access, $analysis);
 
             $freshUser = $this->repository->getTelegramUser($telegramUserId) ?? $user;
-            deliverPrivateMessage($apiBase, $telegramUserId, buildAnalysisDeliveryMessage($analysis['response'], $freshUser));
+            deliverPrivateMessage($apiBase, $telegramUserId, buildAnalysisDeliveryMessage($analysis['response'], $freshUser), true);
         } catch (\Throwable $e) {
             $this->handleAnalysisFailure($e, $telegramUserId, $matchId, $context, $access, $apiBase);
         }

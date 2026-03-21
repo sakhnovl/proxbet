@@ -27,9 +27,15 @@ function buildStartMessage(array $user, array $adminIds, int $telegramUserId): s
 function buildBalanceMessage(array $user): string
 {
     $balance = (int) ($user['ai_balance'] ?? 0);
+    $analysisCost = getAnalysisCost();
+    $balanceWord = formatCreditsWord($balance);
+    $costWord = formatCreditsWord($analysisCost);
+    $status = getWalletStatusMeta($balance, $analysisCost);
 
-    return "Ваш AI-баланс: <b>{$balance}</b>\n"
-        . "Стоимость одного AI-анализа: <b>" . getAnalysisCost() . "</b>";
+    return "💼 <b>Ваш AI-кошелёк</b>\n"
+        . "├ Статус: {$status['emoji']} <b>{$status['label']}</b>\n"
+        . "├ Баланс: <b>{$balance}</b> {$balanceWord}\n"
+        . "└ Стоимость 1 AI-анализа: <b>{$analysisCost}</b> {$costWord}";
 }
 
 function buildBuyMessage(): string
@@ -43,7 +49,39 @@ function buildBuyMessage(): string
 
 function buildAnalysisDeliveryMessage(string $analysisText, array $user): string
 {
-    return "AI-анализ матча:\n\n" . $analysisText . "\n\n" . buildBalanceMessage($user);
+    return "🤖 <b>AI-анализ матча</b>\n\n" . $analysisText . "\n\n" . buildBalanceMessage($user);
+}
+
+function formatCreditsWord(int $amount): string
+{
+    $mod100 = $amount % 100;
+    $mod10 = $amount % 10;
+
+    if ($mod100 >= 11 && $mod100 <= 14) {
+        return 'кредитов';
+    }
+
+    return match ($mod10) {
+        1 => 'кредит',
+        2, 3, 4 => 'кредита',
+        default => 'кредитов',
+    };
+}
+
+/**
+ * @return array{emoji:string,label:string}
+ */
+function getWalletStatusMeta(int $balance, int $analysisCost): array
+{
+    if ($balance < $analysisCost) {
+        return ['emoji' => '🔴', 'label' => 'нужно пополнение'];
+    }
+
+    if ($balance <= $analysisCost * 3) {
+        return ['emoji' => '🟡', 'label' => 'кредитов немного'];
+    }
+
+    return ['emoji' => '🟢', 'label' => 'готов к анализам'];
 }
 
 function creditMessageOptions(): array

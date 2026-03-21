@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Proxbet\Telegram;
 
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\GeminiAnalyzer as AlgorithmOneGeminiAnalyzer;
+
 final class GeminiMatchAnalyzer
 {
     public function __construct(
@@ -21,6 +23,11 @@ final class GeminiMatchAnalyzer
     {
         if ($this->apiKey === '') {
             throw new \RuntimeException('GEMINI_API_KEY is not configured');
+        }
+
+        $algorithmOneExplainAnalysis = $this->analyzeAlgorithmOneWithExplainPrompt($context);
+        if ($algorithmOneExplainAnalysis !== null) {
+            return $algorithmOneExplainAnalysis;
         }
 
         $prompt = $this->buildPrompt($context);
@@ -95,6 +102,37 @@ final class GeminiMatchAnalyzer
 
     /**
      * @param array<string,mixed> $context
+     * @return array{provider:string,model:string,prompt:string,response:string}|null
+     */
+    private function analyzeAlgorithmOneWithExplainPrompt(array $context): ?array
+    {
+        $algorithmId = max(1, (int) ($context['algorithm_id'] ?? 1));
+        $explainContext = $context['algorithm_one_explain_context'] ?? null;
+
+        if ($algorithmId !== 1 || !is_array($explainContext)) {
+            return null;
+        }
+
+        $analyzer = new AlgorithmOneGeminiAnalyzer($this->apiKey, $this->model, $this->timeoutSeconds);
+        $result = $analyzer->analyze($explainContext, AlgorithmOneGeminiAnalyzer::MODE_EXPLAIN);
+        $analysis = is_array($result['analysis'] ?? null) ? $result['analysis'] : [];
+        $text = trim((string) ($analysis['text'] ?? ''));
+
+        if ($text === '') {
+            $error = trim((string) ($analysis['parse_error'] ?? ''));
+            throw new \RuntimeException($error !== '' ? $error : 'Gemini returned empty explain response');
+        }
+
+        return [
+            'provider' => (string) ($result['provider'] ?? 'gemini'),
+            'model' => (string) ($result['model'] ?? $this->model),
+            'prompt' => (string) ($result['prompt'] ?? ''),
+            'response' => $text,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $context
      */
     private function buildPrompt(array $context): string
     {
@@ -107,130 +145,7 @@ final class GeminiMatchAnalyzer
             return $this->buildAlgorithmTwoPrompt($context);
         }
 
-        return $this->buildAlgorithmOnePrompt($context);
-    }
-
-    /**
-     * @param array<string,mixed> $context
-     */
-    private function buildAlgorithmOnePrompt(array $context): string
-    {
-        $messageText = trim((string) ($context['message_text'] ?? ''));
-
-        $lines = [
-            'Ты футбольный аналитик для live-ставок. Нужен короткий, практичный и честный разбор матча.',
-            '',
-            'Не обещай гарантированный исход и не выдумывай факты.',
-            'Работай строго на основе переданных данных.',
-            '',
-            'ОСНОВА АНАЛИЗА:',
-            '- Главная опора - вероятность и вывод сканера проекта',
-            '- Не пересчитывай вероятность матча с нуля',
-            '- Используй вероятность сканера как базу для вердикта и уверенности',
-            '',
-            'ПРАВИЛА ОТКЛОНЕНИЯ:',
-            '- Без сильного контраргумента не отклоняйся от вероятности сканера более чем на 10 п.п.',
-            '- Уверенность должна быть близка к вероятности сканера (допустимо отклонение +/-5-10%)',
-            '- Если сканер рекомендует ставку, не ставь "Не подходит" без явного противоречия данным',
-            '',
-            'ЛОГИКА ВЕРДИКТА:',
-            'Если вероятность сканера:',
-            '- 70% и выше -> обычно "Подходит"',
-            '- 60-69% -> "Сомнительно"',
-            '- ниже 60% -> "Не подходит"',
-            '',
-            'Отклонение возможно только при явных live-сигналах.',
-            '',
-            'ПРИОРИТЕТ LIVE-МЕТРИК (по убыванию важности):',
-            '1. xG',
-            '2. Удары в створ',
-            '3. Опасные атаки',
-            '4. Обычные атаки',
-            '5. Угловые',
-            '',
-            'Не переоценивай количество атак без качества (моментов).',
-            '',
-            'УЧЕТ ВРЕМЕНИ МАТЧА:',
-            '- После 30 минуты обращай больше внимания на качество моментов',
-            '- После 35 минуты снижай уверенность при слабом давлении',
-            '- После 40 минуты будь крайне осторожен с прогнозом гола в 1 тайме',
-            '',
-            'НЕГАТИВНЫЕ СИГНАЛЫ (сильные причины против ставки):',
-            '- Суммарный xG низкий (например < 0.5 к 30 минуте)',
-            '- Почти нет ударов в створ (0-1)',
-            '- Слабые или редкие опасные атаки',
-            '- Давление без реальных моментов',
-            '',
-            'Если такие сигналы есть - можешь понизить оценку или изменить вердикт.',
-            '',
-            'ОБЯЗАТЕЛЬНО:',
-            '- Учитывай вердикт сканера',
-            '- Если не согласен - кратко объясни почему',
-            '- Не игнорируй данные сканера без причины',
-            '',
-            'ФОРМАТ ОТВЕТА (строго соблюдай):',
-            '',
-            'Вердикт: [Подходит / Сомнительно / Не подходит]',
-            'Уверенность: [0-100]%',
-            '',
-            'Причины:',
-            '- причина 1',
-            '- причина 2',
-            '- причина 3',
-            '',
-            'Риск:',
-            '- 1 короткий пункт',
-            '',
-            'ДАННЫЕ ПО МАТЧУ:',
-            'Матч: ' . $this->value($context['home'] ?? null) . ' vs ' . $this->value($context['away'] ?? null),
-            'Лига: ' . $this->value($context['liga'] ?? null),
-            'Страна: ' . $this->value($context['country'] ?? null),
-            'Время: ' . $this->value($context['time'] ?? null),
-            'Статус: ' . $this->value($context['match_status'] ?? null),
-            'Счёт HT: ' . $this->score($context['live_ht_hscore'] ?? null, $context['live_ht_ascore'] ?? null),
-            'Счёт live: ' . $this->score($context['live_hscore'] ?? null, $context['live_ascore'] ?? null),
-            '',
-            'Коэф. П1/X/П2: ' . $this->value($context['home_cf'] ?? null)
-                . ' / ' . $this->value($context['draw_cf'] ?? null)
-                . ' / ' . $this->value($context['away_cf'] ?? null),
-            '',
-            'Тотал:',
-            'линия ' . $this->value($context['total_line'] ?? null),
-            'ТБ ' . $this->value($context['total_line_tb'] ?? null),
-            'ТМ ' . $this->value($context['total_line_tm'] ?? null),
-            '',
-            'Форма 1T:',
-            'дома ' . $this->value($context['ht_match_goals_1'] ?? null),
-            'гости ' . $this->value($context['ht_match_goals_2'] ?? null),
-            '',
-            'H2H 1T:',
-            'дома ' . $this->value($context['h2h_ht_match_goals_1'] ?? null),
-            'гости ' . $this->value($context['h2h_ht_match_goals_2'] ?? null),
-            '',
-            'LIVE:',
-            'xG: ' . $this->value($context['live_xg_home'] ?? null) . ' / ' . $this->value($context['live_xg_away'] ?? null),
-            'Атаки: ' . $this->value($context['live_att_home'] ?? null) . ' / ' . $this->value($context['live_att_away'] ?? null),
-            'Опасные атаки: ' . $this->value($context['live_danger_att_home'] ?? null) . ' / ' . $this->value($context['live_danger_att_away'] ?? null),
-            'Удары в створ: ' . $this->value($context['live_shots_on_target_home'] ?? null) . ' / ' . $this->value($context['live_shots_on_target_away'] ?? null),
-            'Угловые: ' . $this->value($context['live_corner_home'] ?? null) . ' / ' . $this->value($context['live_corner_away'] ?? null),
-            '',
-            'ДАННЫЕ СКАНЕРА:',
-            'Вероятность сканера: ' . $this->value($context['scanner_probability'] ?? null) . '%',
-            'Form score: ' . $this->value($context['scanner_form_score'] ?? null),
-            'H2H score: ' . $this->value($context['scanner_h2h_score'] ?? null),
-            'Live score: ' . $this->value($context['scanner_live_score'] ?? null),
-            '',
-            'Сканер рекомендует ставку: ' . $this->value($context['scanner_bet'] ?? null),
-            'Причина сканера: ' . $this->value($context['scanner_reason'] ?? null),
-        ];
-
-        if ($messageText !== '') {
-            $lines[] = '';
-            $lines[] = 'Изначальный сигнал бота:';
-            $lines[] = $messageText;
-        }
-
-        return implode("\n", $lines);
+        throw new \LogicException('AlgorithmOne prompt is handled by dedicated explain mode');
     }
 
     /**

@@ -178,16 +178,149 @@ function enrichAnalysisContextWithScanner(array $context): array
         return $context;
     }
 
-    $scores = $calculator->calculateAll($formData, $h2hData, $liveData);
-    $decision = $filter->shouldBet($liveData, $scores['probability'], $formData, $h2hData);
-    $context['scanner_form_score'] = round($scores['form_score'], 2);
-    $context['scanner_h2h_score'] = round($scores['h2h_score'], 2);
-    $context['scanner_live_score'] = round($scores['live_score'], 2);
-    $context['scanner_probability'] = round($scores['probability'] * 100);
-    $context['scanner_bet'] = $decision['bet'] ? 'yes' : 'no';
-    $context['scanner_reason'] = $decision['reason'];
+    $algorithmOneContext = buildAlgorithmOneContextData($context, $formData, $h2hData, $liveData, $calculator, $filter);
+    $context['scanner_form_score'] = $algorithmOneContext['scanner_form_score'];
+    $context['scanner_h2h_score'] = $algorithmOneContext['scanner_h2h_score'];
+    $context['scanner_live_score'] = $algorithmOneContext['scanner_live_score'];
+    $context['scanner_probability'] = $algorithmOneContext['scanner_probability'];
+    $context['scanner_bet'] = $algorithmOneContext['scanner_bet'];
+    $context['scanner_reason'] = $algorithmOneContext['scanner_reason'];
+    $context['scanner_algorithm_data'] = $algorithmOneContext['scanner_algorithm_data'];
+    $context['algorithm_one_explain_context'] = $algorithmOneContext['algorithm_one_explain_context'];
 
     return $context;
+}
+
+/**
+ * @param array<string,mixed> $context
+ * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
+ * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
+ * @param array<string,mixed> $liveData
+ * @return array{
+ *   scanner_form_score:float,
+ *   scanner_h2h_score:float,
+ *   scanner_live_score:float,
+ *   scanner_probability:int,
+ *   scanner_bet:string,
+ *   scanner_reason:string,
+ *   scanner_algorithm_data:array<string,mixed>,
+ *   algorithm_one_explain_context:array<string,mixed>
+ * }
+ */
+function buildAlgorithmOneContextData(
+    array $context,
+    array $formData,
+    array $h2hData,
+    array $liveData,
+    ProbabilityCalculator $calculator,
+    MatchFilter $filter
+): array {
+    $scores = $calculator->calculateAll($formData, $h2hData, $liveData);
+    $decision = $filter->shouldBet($liveData, $scores['probability'], $formData, $h2hData);
+    $payload = decodeAlgorithmPayload($context['algorithm_payload_json'] ?? null);
+    $debugTrace = is_array($payload['debug_trace'] ?? null) ? $payload['debug_trace'] : [];
+    $components = is_array($payload['components'] ?? null) ? $payload['components'] : [];
+
+    $algorithmVersion = (int) ($payload['algorithm_version'] ?? 1);
+    $probability = is_numeric($payload['probability'] ?? null)
+        ? (float) $payload['probability']
+        : (float) ($scores['probability'] ?? 0.0);
+    $reason = trim((string) ($payload['decision_reason'] ?? $decision['reason']));
+    $bet = isset($context['bet_message_id']) && $context['bet_message_id'] !== null
+        ? true
+        : (bool) ($decision['bet'] ?? false);
+    $gatingPassed = array_key_exists('gating_passed', $payload)
+        ? (bool) $payload['gating_passed']
+        : $bet;
+    $gatingReason = trim((string) ($payload['gating_reason'] ?? ($bet ? '' : $reason)));
+    $redFlags = normalizeStringList($debugTrace['red_flags'] ?? ($payload['red_flags'] ?? []));
+    $penalties = is_array($debugTrace['penalties'] ?? null)
+        ? $debugTrace['penalties']
+        : (is_array($payload['penalties'] ?? null) ? $payload['penalties'] : []);
+    $gatingContext = is_array($debugTrace['gating_context'] ?? null)
+        ? $debugTrace['gating_context']
+        : (is_array($payload['gating_context'] ?? null) ? $payload['gating_context'] : []);
+
+    if ($components === []) {
+        $components = [
+            'form_score' => round((float) ($scores['form_score'] ?? 0.0), 4),
+            'h2h_score' => round((float) ($scores['h2h_score'] ?? 0.0), 4),
+            'live_score' => round((float) ($scores['live_score'] ?? 0.0), 4),
+        ];
+    }
+
+    $redFlag = $debugTrace['red_flag'] ?? ($payload['red_flag'] ?? ($redFlags[0] ?? null));
+    $scannerFormScore = extractAlgorithmOneComponentScore($components, 'form_score', (float) ($scores['form_score'] ?? 0.0));
+    $scannerH2hScore = extractAlgorithmOneComponentScore(
+        $components,
+        'h2h_score',
+        (float) ($scores['h2h_score'] ?? 0.0),
+        ['h2h_score_effective']
+    );
+    $scannerLiveScore = extractAlgorithmOneComponentScore(
+        $components,
+        'live_score',
+        (float) ($scores['live_score'] ?? 0.0),
+        ['probability_breakdown.live_score_adjusted', 'probability_breakdown.live_score_base']
+    );
+
+    $algorithmData = [
+        'algorithm_version' => $algorithmVersion,
+        'components' => $components,
+        'red_flag' => is_string($redFlag) ? $redFlag : null,
+        'red_flags' => $redFlags,
+        'gating_passed' => $gatingPassed,
+        'gating_reason' => $gatingReason,
+        'decision_reason' => $reason,
+        'probability' => $probability,
+        'penalties' => $penalties,
+        'gating_context' => $gatingContext,
+        'debug_trace' => $debugTrace,
+    ];
+
+    return [
+        'scanner_form_score' => round($scannerFormScore, 2),
+        'scanner_h2h_score' => round($scannerH2hScore, 2),
+        'scanner_live_score' => round($scannerLiveScore, 2),
+        'scanner_probability' => normalizeProbabilityPercent($probability),
+        'scanner_bet' => $bet ? 'yes' : 'no',
+        'scanner_reason' => $reason,
+        'scanner_algorithm_data' => $algorithmData,
+        'algorithm_one_explain_context' => [
+            'algorithm_version' => $algorithmVersion,
+            'home' => normalizeNullableString($context['home'] ?? null),
+            'away' => normalizeNullableString($context['away'] ?? null),
+            'league' => normalizeNullableString($context['liga'] ?? null),
+            'country' => normalizeNullableString($context['country'] ?? null),
+            'time' => normalizeNullableString($context['time'] ?? null),
+            'minute' => extractMinuteFromTime((string) ($context['time'] ?? '')),
+            'live_hscore' => valueOrNull($context['live_hscore'] ?? null, 'int'),
+            'live_ascore' => valueOrNull($context['live_ascore'] ?? null, 'int'),
+            'bet' => $bet,
+            'probability' => $probability,
+            'reason' => $reason,
+            'components' => $components,
+            'gating_passed' => $gatingPassed,
+            'gating_reason' => $gatingReason,
+            'red_flags' => $redFlags,
+            'penalties' => $penalties,
+            'gating_context' => $gatingContext,
+            'live_xg_home' => valueOrNull($context['live_xg_home'] ?? null, 'float'),
+            'live_xg_away' => valueOrNull($context['live_xg_away'] ?? null, 'float'),
+            'live_shots_on_target_home' => valueOrNull($context['live_shots_on_target_home'] ?? null, 'int'),
+            'live_shots_on_target_away' => valueOrNull($context['live_shots_on_target_away'] ?? null, 'int'),
+            'live_danger_att_home' => valueOrNull($context['live_danger_att_home'] ?? null, 'int'),
+            'live_danger_att_away' => valueOrNull($context['live_danger_att_away'] ?? null, 'int'),
+            'live_att_home' => valueOrNull($context['live_att_home'] ?? null, 'int'),
+            'live_att_away' => valueOrNull($context['live_att_away'] ?? null, 'int'),
+            'live_corner_home' => valueOrNull($context['live_corner_home'] ?? null, 'int'),
+            'live_corner_away' => valueOrNull($context['live_corner_away'] ?? null, 'int'),
+            'form_home_ht_goals' => valueOrNull($context['ht_match_goals_1'] ?? null, 'int'),
+            'form_away_ht_goals' => valueOrNull($context['ht_match_goals_2'] ?? null, 'int'),
+            'h2h_home_ht_goals' => valueOrNull($context['h2h_ht_match_goals_1'] ?? null, 'int'),
+            'h2h_away_ht_goals' => valueOrNull($context['h2h_ht_match_goals_2'] ?? null, 'int'),
+        ],
+    ];
 }
 
 function buildAlgorithmTwoContextData(array $context): array
@@ -359,6 +492,121 @@ function extractAlgorithmTwoH2hFirstHalfGoals(mixed $sgiJson): ?int
     }
 
     return $considered === 0 ? null : $count;
+}
+
+/**
+ * @return array<string,mixed>
+ */
+function decodeAlgorithmPayload(mixed $rawPayload): array
+{
+    if (!is_string($rawPayload) || trim($rawPayload) === '') {
+        return [];
+    }
+
+    $decoded = json_decode($rawPayload, true);
+
+    return is_array($decoded) ? $decoded : [];
+}
+
+/**
+ * @param array<string,mixed> $components
+ * @param array<int,string> $fallbackPaths
+ */
+function extractAlgorithmOneComponentScore(
+    array $components,
+    string $primaryKey,
+    float $fallbackScore,
+    array $fallbackPaths = []
+): float {
+    if (is_numeric($components[$primaryKey] ?? null)) {
+        return (float) $components[$primaryKey];
+    }
+
+    foreach ($fallbackPaths as $path) {
+        $value = extractNestedValue($components, $path);
+        if (is_numeric($value)) {
+            return (float) $value;
+        }
+    }
+
+    return $fallbackScore;
+}
+
+function extractNestedValue(array $source, string $path): mixed
+{
+    $current = $source;
+
+    foreach (explode('.', $path) as $segment) {
+        if (!is_array($current) || !array_key_exists($segment, $current)) {
+            return null;
+        }
+
+        $current = $current[$segment];
+    }
+
+    return $current;
+}
+
+/**
+ * @param mixed $value
+ * @return array<int,string>
+ */
+function normalizeStringList(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($value as $item) {
+        if (!is_string($item)) {
+            continue;
+        }
+
+        $item = trim($item);
+        if ($item === '') {
+            continue;
+        }
+
+        $normalized[] = $item;
+    }
+
+    return $normalized;
+}
+
+function normalizeProbabilityPercent(float $probability): int
+{
+    $normalized = $probability <= 1.0 ? $probability * 100.0 : $probability;
+
+    return max(0, min(100, (int) round($normalized)));
+}
+
+function normalizeNullableString(mixed $value): ?string
+{
+    if (!is_string($value)) {
+        return null;
+    }
+
+    $trimmed = trim($value);
+
+    return $trimmed === '' ? null : $trimmed;
+}
+
+function valueOrNull(mixed $value, string $type): mixed
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if ($type === 'int') {
+        return is_numeric($value) ? (int) $value : null;
+    }
+
+    if ($type === 'float') {
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    return $value;
 }
 
 function normalizeInt(mixed $value): int
