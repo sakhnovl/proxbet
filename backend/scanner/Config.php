@@ -6,6 +6,14 @@ namespace Proxbet\Scanner;
 
 /**
  * Scanner configuration for algorithm version control.
+ * 
+ * @deprecated This class is deprecated and will be removed in a future version.
+ *             Use Proxbet\Scanner\Algorithms\AlgorithmOne\Config for Algorithm 1 configuration.
+ *             
+ * Migration path:
+ * - Use AlgorithmOne\Config::getAlgorithmVersion()
+ * - Use AlgorithmOne\Config::isDualRunEnabled()
+ * - Use AlgorithmOne\Config constants for thresholds
  */
 final class Config
 {

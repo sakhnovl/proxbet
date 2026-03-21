@@ -7,6 +7,13 @@ namespace Proxbet\Scanner;
 /**
  * Formats scanner results for output.
  * Separates formatting logic from analysis logic (SRP).
+ * 
+ * @deprecated This class is deprecated and will be removed in a future version.
+ *             Use Proxbet\Scanner\Algorithms\AlgorithmOne\ResultFormatter for Algorithm 1 result formatting.
+ *             
+ * Migration path:
+ * - Algorithm 1: Use AlgorithmOne\ResultFormatter::format()
+ * - Algorithm 2/3: Continue using this class for now
  */
 final class ResultFormatter
 {
@@ -67,9 +74,9 @@ final class ResultFormatter
                 'score_home' => $liveData['ht_hscore'],
                 'score_away' => $liveData['ht_ascore'],
                 'probability' => $scores['probability'],
-                'form_score' => $scores['form_score'],
-                'h2h_score' => $scores['h2h_score'],
-                'live_score' => $scores['live_score'],
+                'form_score' => $scores['form_score'] ?? null,
+                'h2h_score' => $scores['h2h_score'] ?? null,
+                'live_score' => $scores['live_score'] ?? null,
                 'form_data' => [
                     'home_goals' => $formData['home_goals'],
                     'away_goals' => $formData['away_goals'],

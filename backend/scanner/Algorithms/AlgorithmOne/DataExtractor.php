@@ -2,98 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Proxbet\Scanner;
-
-use PDO;
+namespace Proxbet\Scanner\Algorithms\AlgorithmOne;
 
 /**
- * Extracts and structures data from database for scanner analysis.
- * 
- * @deprecated This class is deprecated and will be removed in a future version.
- *             Use Proxbet\Scanner\Algorithms\AlgorithmOne\DataExtractor for Algorithm 1 data extraction.
- *             
- * Migration path:
- * - Algorithm 1: Use AlgorithmOne\DataExtractor
- * - General match queries: Continue using this class for now
- * - Form/H2H/Live data: Use AlgorithmOne\DataExtractor methods
+ * Extracts and structures data from match records for Algorithm 1 analysis.
+ * Isolated version containing only Algorithm 1 specific extraction logic.
  */
 final class DataExtractor
 {
-    public function __construct(private PDO $db)
-    {
-    }
-
-    /**
-     * Get all active live matches.
-     *
-     * @param int|null $limit Maximum number of matches to return
-     * @param int $offset Offset for pagination
-     * @return array<int,array<string,mixed>>
-     */
-    public function getActiveMatches(?int $limit = null, int $offset = 0): array
-    {
-        $sql = 'SELECT * FROM `matches` 
-                WHERE `time` IS NOT NULL 
-                AND `time` != "" 
-                AND `match_status` IS NOT NULL
-                ORDER BY `id` ASC';
-
-        if ($limit !== null) {
-            $sql .= ' LIMIT ' . max(1, $limit) . ' OFFSET ' . max(0, $offset);
-        }
-
-        $stmt = $this->db->query($sql);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        return is_array($rows) ? $rows : [];
-    }
-
-    /**
-     * Get active matches using generator for memory efficiency.
-     * Useful for processing large datasets without loading all into memory.
-     *
-     * @param int $batchSize Number of matches to fetch per batch
-     * @return \Generator<int, array<string,mixed>>
-     */
-    public function getActiveMatchesGenerator(int $batchSize = 100): \Generator
-    {
-        $offset = 0;
-        
-        while (true) {
-            $matches = $this->getActiveMatches($batchSize, $offset);
-            
-            if (empty($matches)) {
-                break;
-            }
-            
-            foreach ($matches as $match) {
-                yield $match;
-            }
-            
-            if (count($matches) < $batchSize) {
-                break;
-            }
-            
-            $offset += $batchSize;
-        }
-    }
-
-    /**
-     * Count total active matches.
-     */
-    public function countActiveMatches(): int
-    {
-        $sql = 'SELECT COUNT(*) FROM `matches` 
-                WHERE `time` IS NOT NULL 
-                AND `time` != "" 
-                AND `match_status` IS NOT NULL';
-
-        $stmt = $this->db->query($sql);
-        $count = $stmt->fetchColumn();
-
-        return is_numeric($count) ? (int) $count : 0;
-    }
-
     /**
      * Extract form data from match record (legacy).
      *
@@ -118,7 +34,7 @@ final class DataExtractor
      * Extract form data for v2 with weighted components.
      *
      * @param array<string,mixed> $match
-     * @param array<string,mixed> $weightedMetrics Weighted form metrics from HtMetricsCalculator
+     * @param array<string,mixed>|null $weightedMetrics Weighted form metrics from WeightedFormService
      * @return array{
      *   home_goals:int,
      *   away_goals:int,
@@ -166,52 +82,6 @@ final class DataExtractor
         return [
             'home_goals' => $homeGoals ?? 0,
             'away_goals' => $awayGoals ?? 0,
-            'has_data' => $hasData,
-        ];
-    }
-
-    /**
-     * Extract data for algorithm 2.
-     *
-     * @param array<string,mixed> $match
-     * @return array{
-     *   home_win_odd:float,
-     *   over_25_odd:float|null,
-     *   total_line:float|null,
-     *   over_25_odd_check_skipped:bool,
-     *   home_first_half_goals_in_last_5:int,
-     *   h2h_first_half_goals_in_last_5:int,
-     *   has_data:bool
-     * }
-     */
-    public function extractAlgorithmTwoData(array $match): array
-    {
-        $homeWinOdd = $this->getFloatOrNull($match, 'home_cf');
-        $over25Odd = null;
-        $over25OddCheckSkipped = false;
-
-        $totalLine = $this->getFloatOrNull($match, 'total_line');
-        if ($totalLine !== null && abs($totalLine - 2.5) < 0.001) {
-            $over25Odd = $this->getFloatOrNull($match, 'total_line_tb');
-        } elseif ($totalLine !== null && $totalLine > 2.5) {
-            $over25OddCheckSkipped = true;
-        }
-
-        $homeFirstHalfGoals = $this->getIntOrNull($match, 'ht_match_goals_1');
-        $h2hFirstHalfGoals = $this->extractH2hAnyFirstHalfGoalMatches($match);
-
-        $hasData = $homeWinOdd !== null
-            && ($over25Odd !== null || $over25OddCheckSkipped)
-            && $homeFirstHalfGoals !== null
-            && $h2hFirstHalfGoals !== null;
-
-        return [
-            'home_win_odd' => $homeWinOdd ?? 0.0,
-            'over_25_odd' => $over25Odd,
-            'total_line' => $totalLine,
-            'over_25_odd_check_skipped' => $over25OddCheckSkipped,
-            'home_first_half_goals_in_last_5' => $homeFirstHalfGoals ?? 0,
-            'h2h_first_half_goals_in_last_5' => $h2hFirstHalfGoals ?? 0,
             'has_data' => $hasData,
         ];
     }
@@ -420,57 +290,6 @@ final class DataExtractor
     }
 
     /**
-     * Extract data for algorithm 3.
-     *
-     * @param array<string,mixed> $match
-     * @return array{
-     *   table_games_1:int,
-     *   table_goals_1:int,
-     *   table_missed_1:int,
-     *   table_games_2:int,
-     *   table_goals_2:int,
-     *   table_missed_2:int,
-     *   live_hscore:int,
-     *   live_ascore:int,
-     *   match_status:string,
-     *   home:string,
-     *   away:string,
-     *   has_data:bool
-     * }
-     */
-    public function extractAlgorithmThreeData(array $match): array
-    {
-        $tableGamesOne = $this->getIntOrNull($match, 'table_games_1');
-        $tableGoalsOne = $this->getIntOrNull($match, 'table_goals_1');
-        $tableMissedOne = $this->getIntOrNull($match, 'table_missed_1');
-        $tableGamesTwo = $this->getIntOrNull($match, 'table_games_2');
-        $tableGoalsTwo = $this->getIntOrNull($match, 'table_goals_2');
-        $tableMissedTwo = $this->getIntOrNull($match, 'table_missed_2');
-
-        $hasData = $tableGamesOne !== null
-            && $tableGoalsOne !== null
-            && $tableMissedOne !== null
-            && $tableGamesTwo !== null
-            && $tableGoalsTwo !== null
-            && $tableMissedTwo !== null;
-
-        return [
-            'table_games_1' => $tableGamesOne ?? 0,
-            'table_goals_1' => $tableGoalsOne ?? 0,
-            'table_missed_1' => $tableMissedOne ?? 0,
-            'table_games_2' => $tableGamesTwo ?? 0,
-            'table_goals_2' => $tableGoalsTwo ?? 0,
-            'table_missed_2' => $tableMissedTwo ?? 0,
-            'live_hscore' => $this->getIntOrZero($match, 'live_hscore'),
-            'live_ascore' => $this->getIntOrZero($match, 'live_ascore'),
-            'match_status' => (string) ($match['match_status'] ?? ''),
-            'home' => (string) ($match['home'] ?? ''),
-            'away' => (string) ($match['away'] ?? ''),
-            'has_data' => $hasData,
-        ];
-    }
-
-    /**
      * Parse minute from time string "mm:ss".
      */
     private function parseMinute(string $time): int
@@ -518,14 +337,6 @@ final class DataExtractor
     /**
      * @param array<string,mixed> $data
      */
-    private function getFloatOrZero(array $data, string $key): float
-    {
-        return $this->getFloatOrNull($data, $key) ?? 0.0;
-    }
-
-    /**
-     * @param array<string,mixed> $data
-     */
     private function getFloatOrNull(array $data, string $key): ?float
     {
         if (!array_key_exists($key, $data)) {
@@ -542,90 +353,5 @@ final class DataExtractor
         }
 
         return null;
-    }
-
-    /**
-     * Update algorithm version and live score components for a match.
-     * 
-     * @param int $matchId Match ID
-     * @param int $algorithmVersion Algorithm version (1 or 2)
-     * @param array<string,mixed>|null $components Algorithm 1 v2 components
-     * @return bool Success
-     */
-    public function updateAlgorithmData(int $matchId, int $algorithmVersion, ?array $components = null): bool
-    {
-        try {
-            $componentsJson = null;
-            if ($components !== null) {
-                $componentsJson = json_encode($components, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                if ($componentsJson === false) {
-                    $componentsJson = null;
-                }
-            }
-            
-            $stmt = $this->db->prepare(
-                'UPDATE `matches` SET `algorithm_version` = ?, `live_score_components` = ? WHERE `id` = ?'
-            );
-            $stmt->execute([$algorithmVersion, $componentsJson, $matchId]);
-            
-            return $stmt->rowCount() > 0;
-        } catch (\Throwable $e) {
-            // Log error but don't throw - this is not critical
-            return false;
-        }
-    }
-
-    /**
-     * Count H2H matches from the last 5 where any team scored in the first half.
-     *
-     * @param array<string,mixed> $match
-     */
-    private function extractH2hAnyFirstHalfGoalMatches(array $match): ?int
-    {
-        $sgiJson = $match['sgi_json'] ?? null;
-        if (!is_string($sgiJson) || trim($sgiJson) === '') {
-            return null;
-        }
-
-        $decoded = json_decode($sgiJson, true);
-        if (!is_array($decoded)) {
-            return null;
-        }
-
-        $h2hList = $decoded['G'] ?? (($decoded['Q']['G'] ?? null));
-        if (!is_array($h2hList)) {
-            return null;
-        }
-
-        $count = 0;
-        $considered = 0;
-
-        foreach (array_slice(array_values($h2hList), 0, 5) as $h2hMatch) {
-            if (!is_array($h2hMatch)) {
-                continue;
-            }
-
-            $firstHalf = $h2hMatch['P'][0] ?? null;
-            if (!is_array($firstHalf)) {
-                continue;
-            }
-
-            $homeGoals = $firstHalf['H'] ?? null;
-            $awayGoals = $firstHalf['A'] ?? null;
-            if (!is_numeric($homeGoals) || !is_numeric($awayGoals)) {
-                continue;
-            }
-
-            $considered++;
-            if (((int) $homeGoals + (int) $awayGoals) > 0) {
-                $count++;
-            }
-        }
-
-        if ($considered === 0) {
-            return null;
-        }
-
-        return $count;
     }
 }

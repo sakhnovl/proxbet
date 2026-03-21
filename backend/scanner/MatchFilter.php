@@ -6,6 +6,14 @@ namespace Proxbet\Scanner;
 
 /**
  * Filters matches based on betting rules and criteria.
+ * 
+ * @deprecated This class is deprecated and will be removed in a future version.
+ *             For Algorithm 1 filtering, use Proxbet\Scanner\Algorithms\AlgorithmOne\Filters\LegacyFilter.
+ *             Algorithm 2 and 3 filtering logic remains in this class for now.
+ *             
+ * Migration path:
+ * - Algorithm 1: Use AlgorithmOne\Filters\LegacyFilter::shouldBet()
+ * - Algorithm 2/3: Continue using this class (no migration yet)
  */
 final class MatchFilter
 {

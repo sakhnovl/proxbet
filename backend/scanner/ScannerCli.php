@@ -8,6 +8,19 @@ require_once __DIR__ . '/../bootstrap/runtime.php';
 use Proxbet\Core\Services\ScannerService;
 use Proxbet\Line\Db;
 use Proxbet\Line\Logger;
+use Proxbet\Scanner\Algorithms\AlgorithmOne;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\ProbabilityCalculator as LegacyProbabilityCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\ProbabilityCalculatorV2;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\PdiCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\ShotQualityCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\TrendCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\TimePressureCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\LeagueFactorCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\CardFactorCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\XgPressureCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\RedFlagChecker;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Filters\LegacyFilter;
+use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\DualRunService;
 use Proxbet\Scanner\BetMessageRepository;
 use Proxbet\Scanner\DataExtractor;
 use Proxbet\Scanner\MatchFilter;
@@ -43,6 +56,34 @@ try {
     $filter = new MatchFilter(resolveMinProbability($minProbability));
     $formatter = new ResultFormatter();
     
+    // Initialize AlgorithmOne components
+    $legacyCalculator = new LegacyProbabilityCalculator();
+    
+    // Initialize V2 calculator dependencies
+    $pdiCalculator = new PdiCalculator();
+    $shotQualityCalculator = new ShotQualityCalculator();
+    $trendCalculator = new TrendCalculator();
+    $timePressureCalculator = new TimePressureCalculator();
+    $leagueFactorCalculator = new LeagueFactorCalculator();
+    $cardFactorCalculator = new CardFactorCalculator();
+    $xgPressureCalculator = new XgPressureCalculator();
+    $redFlagChecker = new RedFlagChecker();
+    
+    $v2Calculator = new ProbabilityCalculatorV2(
+        $pdiCalculator,
+        $shotQualityCalculator,
+        $trendCalculator,
+        $timePressureCalculator,
+        $leagueFactorCalculator,
+        $cardFactorCalculator,
+        $xgPressureCalculator,
+        $redFlagChecker
+    );
+    
+    $legacyFilter = new LegacyFilter();
+    $dualRunService = new DualRunService($legacyCalculator, $v2Calculator, $legacyFilter);
+    $algorithmOne = new AlgorithmOne($legacyCalculator, $v2Calculator, $legacyFilter, $dualRunService);
+    
     // Initialize Telegram notifier if enabled
     $notifier = null;
     if (!$noTelegram) {
@@ -62,7 +103,7 @@ try {
     }
 
     // Create service and scan
-    $service = new ScannerService($extractor, $calculator, $filter, $formatter, $notifier);
+    $service = new ScannerService($extractor, $calculator, $filter, $formatter, $algorithmOne, $notifier);
     $result = $service->scanAndNotify();
 
     // Output results

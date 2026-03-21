@@ -6,6 +6,15 @@ namespace Proxbet\Scanner;
 
 /**
  * Calculates probability scores for first half goal prediction.
+ * 
+ * @deprecated This class is deprecated and will be removed in a future version.
+ *             Use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\ProbabilityCalculator instead.
+ *             For v2 calculations, use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\ProbabilityCalculatorV2.
+ *             
+ * Migration path:
+ * - Legacy calculations: Use AlgorithmOne\Calculators\ProbabilityCalculator
+ * - V2 calculations: Use AlgorithmOne\Calculators\V2\ProbabilityCalculatorV2
+ * - Full algorithm: Use AlgorithmOne\AlgorithmOne::analyze()
  */
 final class ProbabilityCalculator
 {

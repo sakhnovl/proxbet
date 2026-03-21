@@ -11,6 +11,7 @@ if (is_file($vendorAutoload)) {
 
 spl_autoload_register(static function (string $class) use ($rootDir): void {
     static $prefixes = [
+        'Psr\\Log\\' => '/backend/support/Psr/Log/',
         'Proxbet\\Core\\' => '/backend/core/',
         'Proxbet\\Line\\' => '/backend/line/',
         'Proxbet\\Live\\' => '/backend/live/',

@@ -6,6 +6,7 @@ namespace Proxbet\Scanner;
 
 use Proxbet\Line\Logger;
 use Proxbet\Statistic\HtMetricsCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmOne;
 
 /**
  * Main scanner orchestrator for match analysis.
@@ -21,6 +22,7 @@ final class Scanner
         private ProbabilityCalculator $calculator,
         private MatchFilter $filter,
         private ResultFormatter $formatter,
+        private AlgorithmOne $algorithmOne,
         private ?HtMetricsCalculator $htCalculator = null,
     ) {
         $this->htCalculator = $htCalculator ?? new HtMetricsCalculator();
@@ -136,40 +138,42 @@ final class Scanner
 
         $h2hData = $this->extractor->extractH2hData($match);
         
-        // Calculate scores based on version and dual-run mode
+        // Use new AlgorithmOne interface for Algorithm 1 analysis
+        $algorithmOneResult = $this->algorithmOne->analyze([
+            'form_data' => $formData,
+            'h2h_data' => $h2hData,
+            'live_data' => $liveData,
+        ]);
+        
+        // Extract decision and confidence from AlgorithmOne result
+        $algorithmOneDecision = [
+            'bet' => $algorithmOneResult['bet'],
+            'reason' => $algorithmOneResult['reason'],
+        ];
+        
+        // Build scores structure for compatibility with formatter and logging
+        $scores = [
+            'probability' => $algorithmOneResult['confidence'],
+            'algorithm_version' => $algorithmVersion,
+        ];
+        
+        // Handle dual-run data if available
         $legacyScores = null;
         $v2Scores = null;
-        
-        if ($isDualRun) {
-            // Calculate both versions with their respective data
-            $legacyScores = $this->calculator->calculateLegacy($formDataLegacy, $h2hData, $liveDataLegacy);
-            $v2Scores = $this->calculator->calculateV2($formDataV2, $h2hData, $liveDataV2);
-            
-            // Use the configured version as primary
-            $scores = $algorithmVersion === 2 ? $v2Scores : $legacyScores;
-        } else {
-            // Calculate only the configured version
-            $scores = $this->calculator->calculateAll($formData, $h2hData, $liveData);
+        if (isset($algorithmOneResult['dual_run'])) {
+            $dualRun = $algorithmOneResult['dual_run'];
+            $legacyScores = ['probability' => $dualRun['legacy_probability']];
+            $v2Scores = ['probability' => $dualRun['v2_probability']];
         }
         
         $algorithmTwoData = $this->extractor->extractAlgorithmTwoData($match);
         $algorithmThreeData = $this->extractor->extractAlgorithmThreeData($match);
-
-        // Determine Algorithm 1 decision based on version
-        $algorithmOneDecision = $this->determineAlgorithmOneDecision(
-            $scores,
-            $liveData,
-            $formData,
-            $h2hData
-        );
         
         $algorithmTwoDecision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
         $algorithmThreeDecision = $this->filter->shouldBetAlgorithmThree($algorithmThreeData);
 
-        // Save algorithm version and components to database for Algorithm 1
-        $algorithmVersion = $scores['algorithm_version'] ?? 1;
-        $components = ($algorithmVersion === 2 && isset($scores['components'])) ? $scores['components'] : null;
-        $this->extractor->updateAlgorithmData($base['match_id'], $algorithmVersion, $components);
+        // Save algorithm version to database for Algorithm 1
+        $this->extractor->updateAlgorithmData($base['match_id'], $algorithmVersion, null);
 
         if (!$formData['has_data'] || !$h2hData['has_data']) {
             Logger::info('Scanner algorithm 1 skipped because statistics are incomplete', [
@@ -179,36 +183,21 @@ final class Scanner
                 'has_form' => $formData['has_data'],
                 'has_h2h' => $h2hData['has_data'],
                 'reason' => $algorithmOneDecision['reason'],
-                'algorithm_version' => $scores['algorithm_version'] ?? 1,
+                'algorithm_version' => $algorithmVersion,
             ]);
         }
         
-        // Log v2 rejection reasons with detailed components
-        if (isset($scores['algorithm_version']) && $scores['algorithm_version'] === 2) {
-            if (!($algorithmOneDecision['bet'] ?? false)) {
-                $components = $scores['components'] ?? [];
-                Logger::info('Scanner algorithm 1 v2 rejected signal', [
-                    'match_id' => $base['match_id'],
-                    'home' => $base['home'],
-                    'away' => $base['away'],
-                    'minute' => $liveData['minute'],
-                    'reason' => $algorithmOneDecision['reason'] ?? 'unknown',
-                    'probability' => $scores['probability'] ?? 0.0,
-                    'components' => [
-                        'pdi' => $components['pdi'] ?? null,
-                        'shot_quality' => $components['shot_quality'] ?? null,
-                        'trend_acceleration' => $components['trend_acceleration'] ?? null,
-                        'time_pressure' => $components['time_pressure'] ?? null,
-                        'xg_pressure' => $components['xg_pressure'] ?? null,
-                        'card_factor' => $components['card_factor'] ?? null,
-                        'league_factor' => $components['league_factor'] ?? null,
-                        'red_flag' => $components['red_flag'] ?? null,
-                    ],
-                    'form_score' => $scores['form_score'] ?? null,
-                    'h2h_score' => $scores['h2h_score'] ?? null,
-                    'live_score' => $scores['live_score'] ?? null,
-                ]);
-            }
+        // Log rejection reasons
+        if (!$algorithmOneDecision['bet']) {
+            Logger::info('Scanner algorithm 1 rejected signal', [
+                'match_id' => $base['match_id'],
+                'home' => $base['home'],
+                'away' => $base['away'],
+                'minute' => $liveData['minute'],
+                'reason' => $algorithmOneDecision['reason'],
+                'probability' => $scores['probability'],
+                'algorithm_version' => $algorithmVersion,
+            ]);
         }
 
         if (!$algorithmTwoData['has_data']) {
@@ -243,37 +232,6 @@ final class Scanner
             $this->formatter->formatAlgorithmTwo($base, $liveData, $formData, $h2hData, $algorithmTwoData, $algorithmTwoDecision),
             $this->formatter->formatAlgorithmThree($base, $liveData, $formData, $h2hData, $algorithmThreeData, $algorithmThreeDecision),
         ];
-    }
-
-    /**
-     * Determine Algorithm 1 decision based on version.
-     * 
-     * @param array<string,mixed> $scores
-     * @param array<string,mixed> $liveData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $formData
-     * @param array{home_goals:int,away_goals:int,has_data:bool} $h2hData
-     * @return array{bet:bool,reason:string}
-     */
-    private function determineAlgorithmOneDecision(
-        array $scores,
-        array $liveData,
-        array $formData,
-        array $h2hData
-    ): array {
-        $algorithmVersion = $scores['algorithm_version'] ?? 1;
-        
-        // For v2, use the decision from ProbabilityCalculator
-        if ($algorithmVersion === 2 && isset($scores['decision'])) {
-            return $scores['decision'];
-        }
-        
-        // For legacy, use MatchFilter
-        return $this->filter->shouldBetAlgorithmOne(
-            $liveData,
-            $scores['probability'],
-            $formData,
-            $h2hData
-        );
     }
 
     /**
