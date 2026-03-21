@@ -10,9 +10,4 @@
             <directory>.</directory>
         </testsuite>
     </testsuites>
-    <coverage>
-        <report>
-            <text outputFile="php://stdout" showOnlySummary="true"/>
-        </report>
-    </coverage>
 </phpunit>
