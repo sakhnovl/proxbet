@@ -20,13 +20,21 @@ final class TelegramNotifier
     /** @var array<string,bool> */
     private array $sentMatches = [];
     private ?BetMessageRepository $repository;
+    private ?AlgorithmOneChannelVerdictGenerator $algorithmOneVerdictGenerator;
 
-    public function __construct(string $token, string $channelId, string $statePath, ?BetMessageRepository $repository = null)
+    public function __construct(
+        string $token,
+        string $channelId,
+        string $statePath,
+        ?BetMessageRepository $repository = null,
+        ?AlgorithmOneChannelVerdictGenerator $algorithmOneVerdictGenerator = null
+    )
     {
         $this->apiBase = 'https://api.telegram.org/bot' . $token;
         $this->channelId = $channelId;
         $this->statePath = $statePath;
         $this->repository = $repository;
+        $this->algorithmOneVerdictGenerator = $algorithmOneVerdictGenerator;
         $this->loadSentMatches();
     }
 
@@ -48,7 +56,8 @@ final class TelegramNotifier
             return;
         }
 
-        $message = $this->formatMessage($match);
+        $aiVerdict = $this->buildAlgorithmOneAiVerdict($match);
+        $message = $this->formatMessage($match, $aiVerdict);
 
         $sent = false;
         $messageId = null;
@@ -137,7 +146,7 @@ final class TelegramNotifier
     /**
      * @param array<string,mixed> $match
      */
-    private function formatMessage(array $match): string
+    private function formatMessage(array $match, ?string $aiVerdict = null): string
     {
         $algorithmId = (int) ($match['algorithm_id'] ?? 1);
 
@@ -149,28 +158,28 @@ final class TelegramNotifier
             return $this->formatAlgorithmThreeMessage($match);
         }
 
-        return $this->formatAlgorithmOneMessage($match);
+        return $this->formatAlgorithmOneMessage($match, $aiVerdict);
     }
 
     /**
      * @param array<string,mixed> $match
      */
-    private function formatAlgorithmOneMessage(array $match): string
+    private function formatAlgorithmOneMessage(array $match, ?string $aiVerdict = null): string
     {
         $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : null;
         $isV2 = $algorithmData !== null && isset($algorithmData['algorithm_version']) && $algorithmData['algorithm_version'] === 2;
 
         if ($isV2) {
-            return $this->formatAlgorithmOneV2Message($match, $algorithmData);
+            return $this->formatAlgorithmOneV2Message($match, $algorithmData, $aiVerdict);
         }
 
-        return $this->formatAlgorithmOneLegacyMessage($match);
+        return $this->formatAlgorithmOneLegacyMessage($match, $aiVerdict);
     }
 
     /**
      * @param array<string,mixed> $match
      */
-    private function formatAlgorithmOneLegacyMessage(array $match): string
+    private function formatAlgorithmOneLegacyMessage(array $match, ?string $aiVerdict = null): string
     {
         $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
         $statsBlock = $this->buildStatsBlock($match);
@@ -181,7 +190,7 @@ final class TelegramNotifier
         $h2hScore = sprintf('%.2f', (float) ($match['h2h_score'] ?? 0));
         $liveScore = sprintf('%.2f', (float) ($match['live_score'] ?? 0));
 
-        return $header
+        return $header . $this->renderAiVerdictBlock($aiVerdict)
             . "📊 <b>Вероятность: {$probability}</b>\n"
             . "├ Форма: {$formScore} (35%)\n"
             . "├ H2H: {$h2hScore} (15%)\n"
@@ -194,10 +203,9 @@ final class TelegramNotifier
      * @param array<string,mixed> $match
      * @param array<string,mixed> $algorithmData
      */
-    private function formatAlgorithmOneV2Message(array $match, array $algorithmData): string
+    private function formatAlgorithmOneV2Message(array $match, array $algorithmData, ?string $aiVerdict = null): string
     {
         $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: ГОЛ В ПЕРВОМ ТАЙМЕ</b>');
-        $header .= "🧠 <b>Алгоритм 1 v2</b> (улучшенная версия)\n\n";
         
         $statsBlock = $this->buildStatsBlock($match);
         $formBlock = $this->buildFormAndH2hBlock($match);
@@ -209,7 +217,7 @@ final class TelegramNotifier
 
         $components = is_array($algorithmData['components'] ?? null) ? $algorithmData['components'] : [];
         
-        $message = $header
+        $message = $header . $this->renderAiVerdictBlock($aiVerdict)
             . "📊 <b>Вероятность: {$probability}</b>\n"
             . "├ Форма: {$formScore} (25%)\n"
             . "├ H2H: {$h2hScore} (10%)\n"
@@ -217,7 +225,7 @@ final class TelegramNotifier
 
         // Add v2 components breakdown
         if (!empty($components)) {
-            $message .= "🔬 <b>Компоненты Live Score v2:</b>\n";
+            $message .= "🔬 \n";
             
             if (isset($components['pdi'])) {
                 $pdi = sprintf('%.2f', (float) $components['pdi']);
@@ -357,7 +365,7 @@ final class TelegramNotifier
     private function buildHeader(array $match, string $title): string
     {
         $algorithmId = (int) ($match['algorithm_id'] ?? 1);
-        $algorithmName = htmlspecialchars((string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId)), ENT_QUOTES, 'UTF-8');
+        $algorithmName = htmlspecialchars($this->resolveAlgorithmName($match, $algorithmId), ENT_QUOTES, 'UTF-8');
         $home = htmlspecialchars((string) ($match['home'] ?? ''), ENT_QUOTES, 'UTF-8');
         $away = htmlspecialchars((string) ($match['away'] ?? ''), ENT_QUOTES, 'UTF-8');
         $liga = htmlspecialchars((string) ($match['liga'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -372,6 +380,30 @@ final class TelegramNotifier
             . "🏆 {$liga}\n"
             . "⏱ Время: <b>{$time}</b>\n"
             . "⚽ Счет: <b>{$score}</b>\n\n";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function resolveAlgorithmName(array $match, int $algorithmId): string
+    {
+        $baseName = (string) ($match['algorithm_name'] ?? ('Алгоритм ' . $algorithmId));
+        $algorithmData = $match['algorithm_data'] ?? null;
+        if (!is_array($algorithmData)) {
+            return $baseName;
+        }
+
+        $version = $algorithmData['algorithm_version'] ?? null;
+        if ($algorithmId !== 1 || !is_numeric($version) || (int) $version <= 1) {
+            return $baseName;
+        }
+
+        $suffix = ' v' . (int) $version;
+        if (stripos($baseName, $suffix) !== false) {
+            return $baseName;
+        }
+
+        return $baseName . $suffix;
     }
 
     /**
@@ -402,14 +434,43 @@ final class TelegramNotifier
         $homeH2hGoals = (int) ($h2hData['home_goals'] ?? 0);
         $awayH2hGoals = (int) ($h2hData['away_goals'] ?? 0);
 
-        return "📋 <b>Форма 1T</b>: дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
-            . "🤝 <b>H2H 1T</b>: дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
+        return "📋 <b>Форма</b>: дома {$homeFormGoals}/5, гости {$awayFormGoals}/5\n"
+            . "🤝 <b>H2H</b>: дома {$homeH2hGoals}/5, гости {$awayH2hGoals}/5\n";
     }
 
-    /**
-     * @param array<string,mixed> $match
-     * @return array<string,mixed>|null
-     */
+    private function renderAiVerdictBlock(?string $aiVerdict): string
+    {
+        $aiVerdict = trim((string) $aiVerdict);
+        if ($aiVerdict === '') {
+            return '';
+        }
+
+        $text = htmlspecialchars($aiVerdict, ENT_QUOTES, 'UTF-8');
+
+        return "──────────────\n"
+            . "🤖 <b>AI:</b> {$text}\n"
+            . "──────────────\n\n";
+    }
+
+    private function buildAlgorithmOneAiVerdict(array $match): ?string
+    {
+        if ($this->algorithmOneVerdictGenerator === null) {
+            return null;
+        }
+
+        try {
+            return $this->algorithmOneVerdictGenerator->generate($match);
+        } catch (\Throwable $e) {
+            Logger::info('Failed to build AlgorithmOne AI verdict for channel message', [
+                'match_id' => (int) ($match['match_id'] ?? 0),
+                'algorithm_id' => (int) ($match['algorithm_id'] ?? 1),
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     private function buildAlgorithmPayload(array $match): ?array
     {
         $algorithmData = $match['algorithm_data'] ?? null;

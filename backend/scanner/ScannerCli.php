@@ -21,6 +21,16 @@ use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\XgPressureCalculator;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\V2\RedFlagChecker;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Filters\LegacyFilter;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\DualRunService;
+use Proxbet\Scanner\Algorithms\AlgorithmX\AlgorithmX;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\AisCalculator as AlgorithmXAisCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\InterpretationGenerator as AlgorithmXInterpretationGenerator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\ModifierCalculator as AlgorithmXModifierCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\ProbabilityCalculator as AlgorithmXProbabilityCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Config as AlgorithmXConfig;
+use Proxbet\Scanner\Algorithms\AlgorithmX\DataExtractor as AlgorithmXDataExtractor;
+use Proxbet\Scanner\Algorithms\AlgorithmX\DataValidator as AlgorithmXDataValidator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Filters\DecisionFilter as AlgorithmXDecisionFilter;
+use Proxbet\Scanner\AlgorithmOneChannelVerdictGenerator;
 use Proxbet\Scanner\BetMessageRepository;
 use Proxbet\Scanner\DataExtractor;
 use Proxbet\Scanner\MatchFilter;
@@ -28,6 +38,7 @@ use Proxbet\Scanner\ProbabilityCalculator;
 use Proxbet\Scanner\ResultFormatter;
 use Proxbet\Scanner\ScannerOutput;
 use Proxbet\Scanner\TelegramNotifier;
+use Proxbet\Telegram\TelegramAiRepository;
 
 /**
  * CLI interface for running the scanner.
@@ -83,6 +94,18 @@ try {
     $legacyFilter = new LegacyFilter();
     $dualRunService = new DualRunService($legacyCalculator, $v2Calculator, $legacyFilter);
     $algorithmOne = new AlgorithmOne($legacyCalculator, $v2Calculator, $legacyFilter, $dualRunService);
+
+    $algorithmX = new AlgorithmX(
+        new AlgorithmXConfig(),
+        new AlgorithmXDataExtractor(),
+        new AlgorithmXDataValidator(),
+        new AlgorithmXProbabilityCalculator(
+            new AlgorithmXAisCalculator(),
+            new AlgorithmXModifierCalculator(),
+            new AlgorithmXInterpretationGenerator()
+        ),
+        new AlgorithmXDecisionFilter()
+    );
     
     // Initialize Telegram notifier if enabled
     $notifier = null;
@@ -97,13 +120,21 @@ try {
                 @mkdir($stateDir, 0777, true);
             }
             $repository = new BetMessageRepository($db);
-            $notifier = new TelegramNotifier($token, $channelId, $statePath, $repository);
+            $telegramAiRepository = new TelegramAiRepository($db);
+            $algorithmOneVerdictGenerator = new AlgorithmOneChannelVerdictGenerator($telegramAiRepository);
+            $notifier = new TelegramNotifier(
+                $token,
+                $channelId,
+                $statePath,
+                $repository,
+                $algorithmOneVerdictGenerator
+            );
             Logger::info('Telegram notifier initialized', ['channel_id' => $channelId]);
         }
     }
 
     // Create service and scan
-    $service = new ScannerService($extractor, $calculator, $filter, $formatter, $algorithmOne, $notifier);
+    $service = new ScannerService($extractor, $calculator, $filter, $formatter, $algorithmOne, $algorithmX, $notifier);
     $result = $service->scanAndNotify();
 
     // Output results

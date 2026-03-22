@@ -20,6 +20,7 @@ final class ResultFormatter
     private const ALGORITHM_ONE_ID = 1;
     private const ALGORITHM_TWO_ID = 2;
     private const ALGORITHM_THREE_ID = 3;
+    private const ALGORITHM_X_ID = 4;
 
     /**
      * Build Algorithm 1 result structure.
@@ -276,6 +277,63 @@ final class ResultFormatter
             'h2h_data' => $payload['h2h_data'],
             'algorithm_data' => $payload['algorithm_data'],
         ];
+    }
+
+    /**
+     * Build AlgorithmX result structure.
+     * 
+     * @param array{match_id:int,country:string,liga:string,home:string,away:string} $base
+     * @param array<string,mixed> $liveData
+     * @param array<string,mixed> $algorithmXData
+     * @param array<string,mixed> $algorithmXResult
+     * @param array{bet:bool,reason:string} $decision
+     * @return array<string,mixed>
+     */
+    public function formatAlgorithmX(
+        array $base,
+        array $liveData,
+        array $algorithmXData,
+        array $algorithmXResult,
+        array $decision
+    ): array {
+        return $this->buildCommonResult(
+            $base,
+            $liveData,
+            self::ALGORITHM_X_ID,
+            'AlgorithmX: Goal Probability',
+            'first_half_goal',
+            $decision,
+            [
+                'score_home' => $algorithmXData['score_home'] ?? 0,
+                'score_away' => $algorithmXData['score_away'] ?? 0,
+                'probability' => $algorithmXResult['confidence'],
+                'form_score' => null,
+                'h2h_score' => null,
+                'live_score' => null,
+                'form_data' => [
+                    'home_goals' => 0,
+                    'away_goals' => 0,
+                ],
+                'h2h_data' => [
+                    'home_goals' => 0,
+                    'away_goals' => 0,
+                ],
+                'algorithm_data' => [
+                    'minute' => $algorithmXData['minute'] ?? 0,
+                    'dangerous_attacks_home' => $algorithmXData['dangerous_attacks_home'] ?? 0,
+                    'dangerous_attacks_away' => $algorithmXData['dangerous_attacks_away'] ?? 0,
+                    'shots_home' => $algorithmXData['shots_home'] ?? 0,
+                    'shots_away' => $algorithmXData['shots_away'] ?? 0,
+                    'shots_on_target_home' => $algorithmXData['shots_on_target_home'] ?? 0,
+                    'shots_on_target_away' => $algorithmXData['shots_on_target_away'] ?? 0,
+                    'corners_home' => $algorithmXData['corners_home'] ?? 0,
+                    'corners_away' => $algorithmXData['corners_away'] ?? 0,
+                    'probability' => $algorithmXResult['confidence'],
+                    'interpretation' => $algorithmXResult['debug']['interpretation'] ?? '',
+                    'debug' => $algorithmXResult['debug'] ?? [],
+                ],
+            ]
+        );
     }
 
     /**

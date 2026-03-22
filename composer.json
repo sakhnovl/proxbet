@@ -2,9 +2,9 @@
   "name": "proxbet/proxbet",
   "description": "PHP backend for football live scanning, statistics, Telegram automation and service APIs.",
   "type": "project",
-  "require": {},
   "require-dev": {
-    "phpunit/phpunit": "^10.5"
+    "phpunit/phpunit": "^10.5",
+    "phpstan/phpstan": "1.12"
   },
   "autoload": {
     "psr-4": {

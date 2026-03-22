@@ -5,7 +5,5 @@ parameters:
     excludePaths:
         - backend/bootstrap/autoload.php
         - backend/tests
-    ignoreErrors:
-        - '#Call to an undefined method PDO::#'
     checkMissingIterableValueType: false
     checkGenericClassInNonGenericObjectType: false

@@ -95,6 +95,23 @@ When auto-applying an agent, inform the user:
 
 ## TIER 0: UNIVERSAL RULES (Always Active)
 
+### Telegram Completion Notification
+
+Before sending any final "done/completed/finished" message to the user for a completed task, send a Telegram notification first.
+
+**Command:**
+
+```bash
+python .agent/scripts/telegram_notify.py "<short completion summary>"
+```
+
+**Rules:**
+
+1. Run the notification immediately before the final user-facing completion message.
+2. If `TELEGRAM_BOT_TOKEN` is missing, or no destination chat can be resolved from `TELEGRAM_NOTIFY_CHAT_ID` or `TELEGRAM_ADMIN_IDS`, do not claim the notification was sent.
+3. If notification delivery is skipped or fails, mention that explicitly in the final response.
+4. Never hardcode tokens or chat IDs in repository files.
+
 ### 🌐 Language Handling
 
 When user's prompt is NOT in English:

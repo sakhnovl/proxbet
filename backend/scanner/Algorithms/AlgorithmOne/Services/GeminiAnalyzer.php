@@ -16,12 +16,14 @@ final class GeminiAnalyzer
 {
     public const MODE_AUDIT = 'audit';
     public const MODE_EXPLAIN = 'explain';
+    public const MODE_CHANNEL_SHORT = 'channel_short';
 
     private const MAX_LIST_ITEMS = 3;
     private const ALLOWED_VERDICTS = ['support', 'doubt', 'reject'];
     private const ALLOWED_MODES = [
         self::MODE_AUDIT,
         self::MODE_EXPLAIN,
+        self::MODE_CHANNEL_SHORT,
     ];
     private const PLACEHOLDER = 'n/a';
     private const BOOL_YES = 'yes';
@@ -64,7 +66,7 @@ final class GeminiAnalyzer
 
         $mode = $this->normalizeMode($mode);
         $prompt = $this->buildPrompt($context, $mode);
-        $response = $this->callGeminiApi($prompt);
+        $response = $this->callGeminiApi($prompt, $mode);
         $parsed = $this->parseResponse($response, $mode);
 
         return [
@@ -103,6 +105,7 @@ final class GeminiAnalyzer
     {
         return match ($this->normalizeMode($mode)) {
             self::MODE_EXPLAIN => __DIR__ . '/../prompt_template_explain.txt',
+            self::MODE_CHANNEL_SHORT => __DIR__ . '/../prompt_template_channel_short.txt',
             default => __DIR__ . '/../prompt_template.txt',
         };
     }
@@ -195,6 +198,10 @@ final class GeminiAnalyzer
             'form_away_ht_goals' => $this->val($context['form_away_ht_goals'] ?? null),
             'h2h_home_ht_goals' => $this->val($context['h2h_home_ht_goals'] ?? null),
             'h2h_away_ht_goals' => $this->val($context['h2h_away_ht_goals'] ?? null),
+            'shots_total' => $this->val($context['shots_total'] ?? null),
+            'shots_on_target_total' => $this->val($context['shots_on_target_total'] ?? null),
+            'dangerous_attacks_total' => $this->val($context['dangerous_attacks_total'] ?? null),
+            'corners_total' => $this->val($context['corners_total'] ?? null),
         ];
 
         foreach ($vars as $key => $value) {
@@ -215,7 +222,7 @@ final class GeminiAnalyzer
     /**
      * Call Gemini API with prompt.
      */
-    private function callGeminiApi(string $prompt): string
+    private function callGeminiApi(string $prompt, string $mode): string
     {
         $url = sprintf(
             'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s',
@@ -234,7 +241,7 @@ final class GeminiAnalyzer
             ],
             'generationConfig' => [
                 'temperature' => 0.3,
-                'maxOutputTokens' => 350,
+                'maxOutputTokens' => $this->getMaxOutputTokens($mode),
             ],
         ];
 
@@ -277,6 +284,15 @@ final class GeminiAnalyzer
         }
 
         return trim($response);
+    }
+
+    private function getMaxOutputTokens(string $mode): int
+    {
+        return match ($this->normalizeMode($mode)) {
+            self::MODE_CHANNEL_SHORT => 60,
+            self::MODE_EXPLAIN => 350,
+            default => 350,
+        };
     }
 
     /**
@@ -325,6 +341,7 @@ final class GeminiAnalyzer
     {
         return match ($this->normalizeMode($mode)) {
             self::MODE_EXPLAIN => $this->parseExplainResponse($response),
+            self::MODE_CHANNEL_SHORT => $this->parseShortResponse($response),
             default => $this->parseAuditResponse($response),
         };
     }
@@ -386,6 +403,28 @@ final class GeminiAnalyzer
         ];
     }
 
+    /**
+     * @return array{text:string,parse_error:null|string,raw_response:string}
+     */
+    private function parseShortResponse(string $response): array
+    {
+        $text = $this->normalizeShortText($response);
+
+        if ($text === '') {
+            return [
+                'text' => '',
+                'parse_error' => 'Gemini returned empty channel summary response',
+                'raw_response' => $response,
+            ];
+        }
+
+        return [
+            'text' => $text,
+            'parse_error' => null,
+            'raw_response' => $response,
+        ];
+    }
+
     private function sanitizeResponse(string $response): string
     {
         $trimmed = trim($response);
@@ -409,6 +448,33 @@ final class GeminiAnalyzer
         }
 
         return trim(implode("\n", $lines));
+    }
+
+    private function normalizeShortText(string $response): string
+    {
+        $text = trim($this->sanitizeResponse($response));
+        if ($text === '') {
+            return '';
+        }
+
+        $firstLine = preg_split("/\r\n|\n|\r/", $text, 2);
+        if (is_array($firstLine) && isset($firstLine[0])) {
+            $text = $firstLine[0];
+        }
+
+        $text = preg_replace('/\s+/', ' ', $text) ?? $text;
+        $text = trim($text, " \t\n\r\0\x0B\"'`");
+
+        $words = preg_split('/\s+/u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($words) || $words === []) {
+            return '';
+        }
+
+        if (count($words) > 10) {
+            $words = array_slice($words, 0, 10);
+        }
+
+        return trim(implode(' ', $words));
     }
 
     private function normalizeMode(string $mode): string

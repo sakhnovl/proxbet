@@ -7,6 +7,7 @@ namespace Proxbet\Scanner;
 use Proxbet\Line\Logger;
 use Proxbet\Statistic\HtMetricsCalculator;
 use Proxbet\Scanner\Algorithms\AlgorithmOne;
+use Proxbet\Scanner\Algorithms\AlgorithmX\AlgorithmX;
 
 /**
  * Main scanner orchestrator for match analysis.
@@ -16,9 +17,28 @@ final class Scanner
     private const ALGORITHM_ONE_ID = 1;
     private const ALGORITHM_TWO_ID = 2;
     private const ALGORITHM_THREE_ID = 3;
+    private const ALGORITHM_X_ID = 4;
     /** @var array<string,int> */
     private array $algorithmOneRejectSummary = [];
     private int $algorithmOneAcceptedSignals = 0;
+    /**
+     * @var array{
+     *   analyzed:int,
+     *   bet_true:int,
+     *   low_probability:int,
+     *   probability_sum:float,
+     *   bet_true_probability_sum:float,
+     *   bet_false_probability_sum:float
+     * }
+     */
+    private array $algorithmXMonitoring = [
+        'analyzed' => 0,
+        'bet_true' => 0,
+        'low_probability' => 0,
+        'probability_sum' => 0.0,
+        'bet_true_probability_sum' => 0.0,
+        'bet_false_probability_sum' => 0.0,
+    ];
 
     public function __construct(
         private DataExtractor $extractor,
@@ -26,6 +46,7 @@ final class Scanner
         private MatchFilter $filter,
         private ResultFormatter $formatter,
         private AlgorithmOne $algorithmOne,
+        private AlgorithmX $algorithmX,
         private ?HtMetricsCalculator $htCalculator = null,
     ) {
         $this->htCalculator = $htCalculator ?? new HtMetricsCalculator();
@@ -44,6 +65,14 @@ final class Scanner
     {
         $this->algorithmOneRejectSummary = [];
         $this->algorithmOneAcceptedSignals = 0;
+        $this->algorithmXMonitoring = [
+            'analyzed' => 0,
+            'bet_true' => 0,
+            'low_probability' => 0,
+            'probability_sum' => 0.0,
+            'bet_true_probability_sum' => 0.0,
+            'bet_false_probability_sum' => 0.0,
+        ];
 
         $matches = $this->extractor->getActiveMatches();
         $total = count($matches);
@@ -87,6 +116,7 @@ final class Scanner
             'accepted' => $this->algorithmOneAcceptedSignals,
             'rejected' => $this->algorithmOneRejectSummary,
         ]);
+        $this->logAlgorithmXMonitoringSummary();
 
         return [
             'total' => $total,
@@ -204,9 +234,18 @@ final class Scanner
         
         $algorithmTwoData = $this->extractor->extractAlgorithmTwoData($match);
         $algorithmThreeData = $this->extractor->extractAlgorithmThreeData($match);
+        $algorithmXData = $this->extractor->extractAlgorithmXData($match);
         
         $algorithmTwoDecision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmTwoData);
         $algorithmThreeDecision = $this->filter->shouldBetAlgorithmThree($algorithmThreeData);
+        
+        // Analyze with AlgorithmX
+        $algorithmXResult = $this->algorithmX->analyze(['live_data' => $algorithmXData]);
+        $algorithmXDecision = [
+            'bet' => $algorithmXResult['bet'],
+            'reason' => $algorithmXResult['reason'],
+        ];
+        $this->collectAlgorithmXMonitoring($algorithmXResult, $algorithmXDecision);
 
         // Save Algorithm 1 debug payload to database
         $algorithmOneStoragePayload = ($algorithmVersion === 2 || isset($scores['dual_run']))
@@ -281,6 +320,36 @@ final class Scanner
             ]);
         }
 
+        // Log AlgorithmX results
+        if (!$algorithmXData['has_data']) {
+            Logger::info('Scanner algorithm X skipped because live data are incomplete', [
+                'match_id' => $base['match_id'],
+                'home' => $base['home'],
+                'away' => $base['away'],
+                'minute' => $algorithmXData['minute'],
+                'reason' => $algorithmXDecision['reason'],
+            ]);
+        } elseif (!$algorithmXDecision['bet']) {
+            Logger::info('Scanner algorithm X rejected signal', [
+                'match_id' => $base['match_id'],
+                'home' => $base['home'],
+                'away' => $base['away'],
+                'minute' => $algorithmXData['minute'],
+                'reason' => $algorithmXDecision['reason'],
+                'probability' => $algorithmXResult['confidence'],
+                'debug' => $algorithmXResult['debug'] ?? [],
+            ]);
+        } else {
+            Logger::info('Scanner algorithm X accepted signal', [
+                'match_id' => $base['match_id'],
+                'home' => $base['home'],
+                'away' => $base['away'],
+                'minute' => $algorithmXData['minute'],
+                'probability' => $algorithmXResult['confidence'],
+                'debug' => $algorithmXResult['debug'] ?? [],
+            ]);
+        }
+
         return [
             $this->formatter->formatAlgorithmOne(
                 $base,
@@ -294,6 +363,7 @@ final class Scanner
             ),
             $this->formatter->formatAlgorithmTwo($base, $liveData, $formData, $h2hData, $algorithmTwoData, $algorithmTwoDecision),
             $this->formatter->formatAlgorithmThree($base, $liveData, $formData, $h2hData, $algorithmThreeData, $algorithmThreeDecision),
+            $this->formatter->formatAlgorithmX($base, $liveData, $algorithmXData, $algorithmXResult, $algorithmXDecision),
         ];
     }
 
@@ -322,5 +392,75 @@ final class Scanner
         }
 
         $this->algorithmOneRejectSummary[$normalizedReason] = ($this->algorithmOneRejectSummary[$normalizedReason] ?? 0) + 1;
+    }
+
+    /**
+     * @param array<string,mixed> $algorithmXResult
+     * @param array{bet:bool,reason:string} $algorithmXDecision
+     */
+    private function collectAlgorithmXMonitoring(array $algorithmXResult, array $algorithmXDecision): void
+    {
+        $probability = (float) ($algorithmXResult['confidence'] ?? 0.0);
+        $this->algorithmXMonitoring['analyzed']++;
+        $this->algorithmXMonitoring['probability_sum'] += $probability;
+
+        if ($probability < 0.10) {
+            $this->algorithmXMonitoring['low_probability']++;
+        }
+
+        if ($algorithmXDecision['bet']) {
+            $this->algorithmXMonitoring['bet_true']++;
+            $this->algorithmXMonitoring['bet_true_probability_sum'] += $probability;
+            return;
+        }
+
+        $this->algorithmXMonitoring['bet_false_probability_sum'] += $probability;
+    }
+
+    private function logAlgorithmXMonitoringSummary(): void
+    {
+        $analyzed = $this->algorithmXMonitoring['analyzed'];
+        if ($analyzed === 0) {
+            Logger::info('Scanner algorithm X monitoring summary', [
+                'analyzed' => 0,
+            ]);
+            return;
+        }
+
+        $betTrue = $this->algorithmXMonitoring['bet_true'];
+        $betFalse = $analyzed - $betTrue;
+        $lowProbabilityRate = $this->algorithmXMonitoring['low_probability'] / $analyzed;
+        $betTrueRate = $betTrue / $analyzed;
+        $avgProbability = $this->algorithmXMonitoring['probability_sum'] / $analyzed;
+        $avgBetTrueProbability = $betTrue > 0
+            ? $this->algorithmXMonitoring['bet_true_probability_sum'] / $betTrue
+            : 0.0;
+        $avgBetFalseProbability = $betFalse > 0
+            ? $this->algorithmXMonitoring['bet_false_probability_sum'] / $betFalse
+            : 0.0;
+
+        Logger::info('Scanner algorithm X monitoring summary', [
+            'analyzed' => $analyzed,
+            'bet_true' => $betTrue,
+            'bet_true_rate' => round($betTrueRate, 4),
+            'low_probability_rate' => round($lowProbabilityRate, 4),
+            'avg_probability' => round($avgProbability, 4),
+            'avg_probability_bet_true' => round($avgBetTrueProbability, 4),
+            'avg_probability_bet_false' => round($avgBetFalseProbability, 4),
+        ]);
+
+        if ($lowProbabilityRate > 0.90) {
+            Logger::warning('Scanner algorithm X alert: too many low probability matches', [
+                'analyzed' => $analyzed,
+                'low_probability_rate' => round($lowProbabilityRate, 4),
+            ]);
+        }
+
+        if ($betTrueRate > 0.50) {
+            Logger::warning('Scanner algorithm X alert: bet=true rate is unusually high', [
+                'analyzed' => $analyzed,
+                'bet_true_rate' => round($betTrueRate, 4),
+            ]);
+        }
     }
 }

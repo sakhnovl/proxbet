@@ -1,4 +1,4 @@
-проанализируй как работает и что делает backend\telegram\GeminiMatchAnalyzer.php
-мне нужно для backend\scanner\Algorithms\AlgorithmOne.php сделать свой промпт для ии(чтобы было свое сообщение для ии), и сделай чтобы остальными функциями он пользовался которые уже реализованы, просто свой промпт, и сделай чтобы этот промпт находился в папке backend\scanner\Algorithms\AlgorithmOne
+проанализируй полностью docs\goal_probability_agent_prompt.md и проанализируй полностью проект, чтобы понять как можно внедрить этот алгоритм docs\goal_probability_agent_prompt.md к нам, алгоритм должен распологаться в backend\scanner\Algorithms\AlgorithmX 
+проанализируй backend\scanner\Algorithms\AlgorithmOne.php - такая структура должна быть
 
-и напиши полное todo + техническое задание для ии агента в файл docs\todo.md
+напиши полное подробное todo + техническое задание чтобы любой ии агент смог сделать в файл docs\todo.md

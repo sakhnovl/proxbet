@@ -667,6 +667,39 @@ final class DataExtractor
     }
 
     /**
+     * Extract data for AlgorithmX.
+     *
+     * @param array<string,mixed> $match
+     * @return array<string,mixed>
+     */
+    public function extractAlgorithmXData(array $match): array
+    {
+        $timeStr = (string) ($match['time'] ?? '00:00');
+        $minute = $this->parseMinute($timeStr);
+
+        $shotsHome = $this->getIntOrZero($match, 'live_shots_on_target_home')
+                   + $this->getIntOrZero($match, 'live_shots_off_target_home');
+        $shotsAway = $this->getIntOrZero($match, 'live_shots_on_target_away')
+                   + $this->getIntOrZero($match, 'live_shots_off_target_away');
+
+        return [
+            'minute' => $minute,
+            'score_home' => $this->getIntOrZero($match, 'live_ht_hscore'),
+            'score_away' => $this->getIntOrZero($match, 'live_ht_ascore'),
+            'dangerous_attacks_home' => $this->getIntOrZero($match, 'live_danger_att_home'),
+            'dangerous_attacks_away' => $this->getIntOrZero($match, 'live_danger_att_away'),
+            'shots_home' => $shotsHome,
+            'shots_away' => $shotsAway,
+            'shots_on_target_home' => $this->getIntOrZero($match, 'live_shots_on_target_home'),
+            'shots_on_target_away' => $this->getIntOrZero($match, 'live_shots_on_target_away'),
+            'corners_home' => $this->getIntOrZero($match, 'live_corner_home'),
+            'corners_away' => $this->getIntOrZero($match, 'live_corner_away'),
+            'match_status' => (string) ($match['match_status'] ?? ''),
+            'has_data' => $minute > 0,
+        ];
+    }
+
+    /**
      * Count H2H matches from the last 5 where any team scored in the first half.
      *
      * @param array<string,mixed> $match

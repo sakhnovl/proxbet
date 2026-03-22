@@ -175,6 +175,27 @@ final class GeminiAnalyzerTest extends TestCase
         $this->assertStringNotContainsString('=== JSON RESPONSE CONTRACT ===', $prompt);
     }
 
+    public function testBuildPromptUsesDedicatedChannelShortTemplate(): void
+    {
+        $analyzer = new GeminiAnalyzer('test-key');
+        $prompt = $this->buildPrompt($analyzer, [
+            'algorithm_version' => Config::VERSION_V2,
+            'probability' => 0.67,
+            'shots_total' => 9,
+            'shots_on_target_total' => 4,
+            'dangerous_attacks_total' => 51,
+            'corners_total' => 3,
+        ], GeminiAnalyzer::MODE_CHANNEL_SHORT);
+
+        $this->assertStringContainsString('=== CHANNEL SHORT MODE ===', $prompt);
+        $this->assertStringContainsString('- Maximum length: 10 words.', $prompt);
+        $this->assertStringContainsString('- Return exactly one short line.', $prompt);
+        $this->assertStringContainsString('- Do not say that the algorithm recommends, considers, or suggests the bet.', $prompt);
+        $this->assertStringContainsString('Shots total: 9', $prompt);
+        $this->assertStringContainsString('Dangerous attacks total: 51', $prompt);
+        $this->assertStringNotContainsString('=== JSON RESPONSE CONTRACT ===', $prompt);
+    }
+
     public function testParseResponseDecodesAndNormalizesJsonContract(): void
     {
         $analyzer = new GeminiAnalyzer('test-key');
@@ -240,6 +261,28 @@ final class GeminiAnalyzerTest extends TestCase
 
         $this->assertSame('', $analysis['text']);
         $this->assertSame('Gemini returned empty explain response', $analysis['parse_error']);
+    }
+
+    public function testParseResponseNormalizesShortChannelSummary(): void
+    {
+        $analyzer = new GeminiAnalyzer('test-key');
+        $analysis = $this->parseResponse(
+            $analyzer,
+            "\"Темп высокий, давление растет, гол до перерыва выглядит рабочим вариантом\"\nвторая строка",
+            GeminiAnalyzer::MODE_CHANNEL_SHORT
+        );
+
+        $this->assertSame('Темп высокий, давление растет, гол до перерыва выглядит рабочим вариантом', $analysis['text']);
+        $this->assertNull($analysis['parse_error']);
+    }
+
+    public function testParseResponseReturnsControlledFallbackForEmptyChannelSummary(): void
+    {
+        $analyzer = new GeminiAnalyzer('test-key');
+        $analysis = $this->parseResponse($analyzer, "```text\n\n```\n", GeminiAnalyzer::MODE_CHANNEL_SHORT);
+
+        $this->assertSame('', $analysis['text']);
+        $this->assertSame('Gemini returned empty channel summary response', $analysis['parse_error']);
     }
 
     public function testParseResponseNormalizesUnknownVerdictAndCodeFenceWrapper(): void

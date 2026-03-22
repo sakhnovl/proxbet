@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Core\Services;
 
 use Proxbet\Scanner\Algorithms\AlgorithmOne;
+use Proxbet\Scanner\Algorithms\AlgorithmX\AlgorithmX;
 use Proxbet\Scanner\DataExtractor;
 use Proxbet\Scanner\MatchFilter;
 use Proxbet\Scanner\ProbabilityCalculator;
@@ -26,9 +27,10 @@ class ScannerService
         MatchFilter $filter,
         ResultFormatter $formatter,
         AlgorithmOne $algorithmOne,
+        AlgorithmX $algorithmX,
         ?TelegramNotifier $notifier = null
     ) {
-        $this->scanner = new Scanner($extractor, $calculator, $filter, $formatter, $algorithmOne);
+        $this->scanner = new Scanner($extractor, $calculator, $filter, $formatter, $algorithmOne, $algorithmX);
         $this->notifier = $notifier;
     }
 

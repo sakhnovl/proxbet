@@ -10,6 +10,7 @@
     <testsuites>
         <testsuite name="Scanner Tests">
             <directory>.</directory>
+            <directory>../Algorithms/AlgorithmX/tests</directory>
         </testsuite>
     </testsuites>
     <source>

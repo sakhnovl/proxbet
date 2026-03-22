@@ -8,6 +8,15 @@ use Proxbet\Core\Interfaces\AlgorithmInterface;
 use Proxbet\Scanner\Algorithms\AlgorithmOne;
 use Proxbet\Scanner\Algorithms\AlgorithmTwo;
 use Proxbet\Scanner\Algorithms\AlgorithmThree;
+use Proxbet\Scanner\Algorithms\AlgorithmX\AlgorithmX;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Config as AlgorithmXConfig;
+use Proxbet\Scanner\Algorithms\AlgorithmX\DataExtractor as AlgorithmXDataExtractor;
+use Proxbet\Scanner\Algorithms\AlgorithmX\DataValidator as AlgorithmXDataValidator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\AisCalculator as AlgorithmXAisCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\ModifierCalculator as AlgorithmXModifierCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\InterpretationGenerator as AlgorithmXInterpretationGenerator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Calculators\ProbabilityCalculator as AlgorithmXProbabilityCalculator;
+use Proxbet\Scanner\Algorithms\AlgorithmX\Filters\DecisionFilter as AlgorithmXDecisionFilter;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\ProbabilityCalculator as AlgorithmOneProbabilityCalculator;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\FormScoreCalculator;
 use Proxbet\Scanner\Algorithms\AlgorithmOne\Calculators\H2hScoreCalculator;
@@ -49,6 +58,7 @@ final class AlgorithmFactory
             1 => $this->createAlgorithmOne(),
             2 => new AlgorithmTwo($this->filter),
             3 => new AlgorithmThree($this->filter),
+            4 => $this->createAlgorithmX(),
             default => throw new \InvalidArgumentException("Unknown algorithm ID: {$algorithmId}"),
         };
     }
@@ -93,6 +103,36 @@ final class AlgorithmFactory
     }
 
     /**
+     * Create AlgorithmX with all dependencies.
+     */
+    private function createAlgorithmX(): AlgorithmX
+    {
+        $config = new AlgorithmXConfig();
+        $extractor = new AlgorithmXDataExtractor();
+        $validator = new AlgorithmXDataValidator();
+        
+        $aisCalculator = new AlgorithmXAisCalculator();
+        $modifierCalculator = new AlgorithmXModifierCalculator();
+        $interpretationGenerator = new AlgorithmXInterpretationGenerator();
+        
+        $probabilityCalculator = new AlgorithmXProbabilityCalculator(
+            $aisCalculator,
+            $modifierCalculator,
+            $interpretationGenerator
+        );
+        
+        $decisionFilter = new AlgorithmXDecisionFilter();
+        
+        return new AlgorithmX(
+            $config,
+            $extractor,
+            $validator,
+            $probabilityCalculator,
+            $decisionFilter
+        );
+    }
+
+    /**
      * Get all available algorithms.
      *
      * @return array<int,AlgorithmInterface>
@@ -103,6 +143,7 @@ final class AlgorithmFactory
             $this->create(1),
             $this->create(2),
             $this->create(3),
+            $this->create(4),
         ];
     }
 }
