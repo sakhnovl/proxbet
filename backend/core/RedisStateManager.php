@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Proxbet\Core;
 
 use Proxbet\Line\Logger;
-use Redis;
 use RuntimeException;
 
 /**
@@ -13,7 +12,7 @@ use RuntimeException;
  */
 class RedisStateManager
 {
-    private Redis $redis;
+    private \Redis $redis;
     private string $keyPrefix;
     private int $defaultTtl;
 
@@ -23,7 +22,11 @@ class RedisStateManager
         string $keyPrefix = 'proxbet:',
         int $defaultTtl = 86400
     ) {
-        $this->redis = new Redis();
+        if (!class_exists(\Redis::class)) {
+            throw new RuntimeException('Redis extension is not installed. Redis is optional and must be enabled explicitly.');
+        }
+
+        $this->redis = new \Redis();
         $this->keyPrefix = $keyPrefix;
         $this->defaultTtl = $defaultTtl;
 
@@ -89,7 +92,7 @@ class RedisStateManager
         $fullKey = $this->keyPrefix . $key;
 
         try {
-            return $this->redis->del($fullKey) > 0;
+            return $this->redis->del($fullKey) !== 0;
         } catch (\Throwable $e) {
             Logger::error('Redis delete failed', ['key' => $key, 'error' => $e->getMessage()]);
             return false;
@@ -104,7 +107,7 @@ class RedisStateManager
         $fullKey = $this->keyPrefix . $key;
 
         try {
-            return $this->redis->exists($fullKey) > 0;
+            return $this->redis->exists($fullKey) !== 0;
         } catch (\Throwable $e) {
             Logger::error('Redis exists check failed', ['key' => $key, 'error' => $e->getMessage()]);
             return false;

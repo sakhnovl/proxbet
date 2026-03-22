@@ -33,10 +33,10 @@ echo "Host: $DB_HOST"
 echo "Backup file: $BACKUP_FILE"
 
 # Perform backup with compression
-if [ -n "$DB_PASSWORD" ]; then
-    mysqldump -h "$DB_HOST" \
-              -u "$DB_USER" \
-              -p"$DB_PASSWORD" \
+if [ -n "$DB_PASS" ]; then
+    mysqldump --host="$DB_HOST" \
+              --user="$DB_USER" \
+              -p"$DB_PASS" \
               --single-transaction \
               --routines \
               --triggers \

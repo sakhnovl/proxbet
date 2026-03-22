@@ -88,6 +88,50 @@ final class GeminiMatchAnalyzerTest extends TestCase
         $this->assertStringContainsString('ИТБ', $prompt);
     }
 
+    public function testBuildPromptForAlgorithmX(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $context = [
+            'algorithm_id' => 4,
+            'home' => 'Pressure United',
+            'away' => 'Rapid City',
+            'time' => '14:00',
+            'scanner_reason' => 'High goal probability',
+            'scanner_algorithm_data' => [
+                'probability' => 0.83,
+                'dangerous_attacks_home' => 40,
+                'dangerous_attacks_away' => 35,
+                'shots_on_target_home' => 10,
+                'shots_on_target_away' => 8,
+                'debug' => [
+                    'ais_rate' => 3.35,
+                ],
+            ],
+        ];
+
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('buildPrompt');
+        $method->setAccessible(true);
+
+        $prompt = $method->invoke($analyzer, $context);
+
+        $this->assertStringContainsString('AlgorithmX', $prompt);
+        $this->assertStringContainsString('Pressure United', $prompt);
+        $this->assertStringContainsString('AIS', $prompt);
+    }
+
+    public function testNormalizeShortTextTrimsToSingleTelegramLine(): void
+    {
+        $analyzer = new GeminiMatchAnalyzer($this->testApiKey);
+        $reflection = new \ReflectionClass($analyzer);
+        $method = $reflection->getMethod('normalizeShortText');
+        $method->setAccessible(true);
+
+        $text = $method->invoke($analyzer, "```text\nТемп очень высокий и давление стабильно держится весь отрезок\n```");
+
+        $this->assertSame('Темп очень высокий и давление стабильно держится весь отрезок', $text);
+    }
+
     public function testExtractTextFromValidResponse(): void
     {
         $analyzer = new GeminiMatchAnalyzer($this->testApiKey);

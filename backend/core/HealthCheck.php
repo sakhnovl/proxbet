@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Proxbet\Core;
 
 use PDO;
-use Redis;
 use Proxbet\Line\Logger;
 
 /**
@@ -46,8 +45,15 @@ class HealthCheck
     public function addRedisCheck(string $host = '127.0.0.1', int $port = 6379, string $name = 'redis'): self
     {
         $this->checks[$name] = function () use ($host, $port) {
+            if (!class_exists(\Redis::class)) {
+                return [
+                    'status' => 'healthy',
+                    'message' => 'Redis extension not installed; check skipped',
+                ];
+            }
+
             try {
-                $redis = new Redis();
+                $redis = new \Redis();
                 $connected = $redis->connect($host, $port, 1.0);
                 
                 if (!$connected) {

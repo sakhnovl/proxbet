@@ -34,22 +34,7 @@ final class RateLimiter
      */
     public function check(string $identifier): bool
     {
-        $key = $this->getKey($identifier);
-        $attempts = $this->getAttempts($key);
-        
-        // Clean old attempts
-        $now = time();
-        $attempts = array_filter($attempts, fn($timestamp) => $timestamp > $now - $this->windowSeconds);
-
-        if (count($attempts) >= $this->maxAttempts) {
-            return false;
-        }
-
-        // Record this attempt
-        $attempts[] = $now;
-        $this->saveAttempts($key, $attempts);
-
-        return true;
+        return $this->checkLimit($identifier, $this->maxAttempts, $this->windowSeconds);
     }
 
     /**
@@ -57,13 +42,30 @@ final class RateLimiter
      */
     public function remaining(string $identifier): int
     {
-        $key = $this->getKey($identifier);
-        $attempts = $this->getAttempts($key);
-        
-        $now = time();
-        $attempts = array_filter($attempts, fn($timestamp) => $timestamp > $now - $this->windowSeconds);
+        return $this->getRemainingRequests($identifier, $this->maxAttempts, $this->windowSeconds);
+    }
 
-        return max(0, $this->maxAttempts - count($attempts));
+    public function checkLimit(string $identifier, int $maxAttempts, int $windowSeconds): bool
+    {
+        $key = $this->getScopedKey($identifier, $maxAttempts, $windowSeconds);
+        $attempts = $this->filterAttempts($this->getAttempts($key), $windowSeconds);
+
+        if (count($attempts) >= $maxAttempts) {
+            return false;
+        }
+
+        $attempts[] = time();
+        $this->saveAttempts($key, $attempts);
+
+        return true;
+    }
+
+    public function getRemainingRequests(string $identifier, int $maxAttempts, int $windowSeconds): int
+    {
+        $key = $this->getScopedKey($identifier, $maxAttempts, $windowSeconds);
+        $attempts = $this->filterAttempts($this->getAttempts($key), $windowSeconds);
+
+        return max(0, $maxAttempts - count($attempts));
     }
 
     /**
@@ -86,6 +88,25 @@ final class RateLimiter
     private function getFilePath(string $key): string
     {
         return $this->storageDir . '/' . $key . '.json';
+    }
+
+    private function getScopedKey(string $identifier, int $maxAttempts, int $windowSeconds): string
+    {
+        return $this->getKey($identifier . '|' . $maxAttempts . '|' . $windowSeconds);
+    }
+
+    /**
+     * @param array<int> $attempts
+     * @return array<int>
+     */
+    private function filterAttempts(array $attempts, int $windowSeconds): array
+    {
+        $now = time();
+
+        return array_values(array_filter(
+            $attempts,
+            static fn(int $timestamp): bool => $timestamp > $now - $windowSeconds
+        ));
     }
 
     /**

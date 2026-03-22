@@ -220,9 +220,16 @@ final class SchemaBootstrap
             . '  PRIMARY KEY (`id`),'
             . '  UNIQUE KEY `uniq_matches_evid` (`evid`),'
             . '  KEY `idx_matches_sgi` (`sgi`),'
+            . '  KEY `idx_matches_start_time` (`start_time`),'
+            . '  KEY `idx_matches_match_status` (`match_status`),'
+            . '  KEY `idx_matches_country_liga` (`country`, `liga`),'
+            . '  KEY `idx_matches_live_updated_at` (`live_updated_at`),'
             . '  KEY `idx_matches_stats_refresh_needed` (`stats_refresh_needed`),'
             . '  KEY `idx_matches_stats_fetch_status` (`stats_fetch_status`),'
-            . '  KEY `idx_matches_stats_updated_at` (`stats_updated_at`)'
+            . '  KEY `idx_matches_stats_updated_at` (`stats_updated_at`),'
+            . '  KEY `idx_matches_scanner_query` (`match_status`, `start_time`, `stats_fetch_status`),'
+            . '  KEY `idx_matches_stats_batch` (`stats_refresh_needed`, `stats_fetch_status`, `stats_updated_at`, `id`),'
+            . '  KEY `idx_matches_cleanup` (`match_status`, `time`)'
             . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
@@ -293,9 +300,16 @@ final class SchemaBootstrap
 
         self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD UNIQUE KEY `uniq_matches_evid` (`evid`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_sgi` (`sgi`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_start_time` (`start_time`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_match_status` (`match_status`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_country_liga` (`country`, `liga`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_live_updated_at` (`live_updated_at`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_stats_refresh_needed` (`stats_refresh_needed`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_stats_fetch_status` (`stats_fetch_status`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_stats_updated_at` (`stats_updated_at`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_scanner_query` (`match_status`, `start_time`, `stats_fetch_status`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_stats_batch` (`stats_refresh_needed`, `stats_fetch_status`, `stats_updated_at`, `id`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `matches` ADD KEY `idx_matches_cleanup` (`match_status`, `time`)');
     }
 
     private static function ensureLiveMatchSnapshotsTable(PDO $pdo): void
@@ -460,6 +474,8 @@ final class SchemaBootstrap
         self::tryAddIndex($pdo, 'ALTER TABLE `bet_messages` ADD KEY `idx_match_algorithm` (`match_id`, `algorithm_id`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `bet_messages` ADD KEY `idx_bet_status` (`bet_status`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `bet_messages` ADD KEY `idx_sent_at` (`sent_at`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `bet_messages` ADD KEY `idx_bet_messages_checked_at` (`checked_at`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `bet_messages` ADD KEY `idx_bet_messages_status_sent` (`bet_status`, `sent_at`)');
     }
 
     private static function ensureTelegramUsersTable(PDO $pdo): void
@@ -512,6 +528,7 @@ final class SchemaBootstrap
         }
 
         self::tryAddIndex($pdo, 'ALTER TABLE `telegram_users` ADD UNIQUE KEY `uniq_telegram_user_id` (`telegram_user_id`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `telegram_users` ADD KEY `idx_telegram_users_last_interaction` (`last_interaction_at`)');
 
         if (self::hasTableIndex($pdo, 'telegram_users', 'idx_subscription_until')) {
             try {
@@ -590,6 +607,8 @@ final class SchemaBootstrap
         self::tryAddIndex($pdo, 'ALTER TABLE `ai_analysis_requests` ADD UNIQUE KEY `uniq_ai_user_match` (`telegram_user_id`, `match_id`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_match_id` (`match_id`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_status` (`status`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_analysis_created_at` (`created_at`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `ai_analysis_requests` ADD KEY `idx_ai_analysis_status_created` (`status`, `created_at`)');
     }
 
     private static function ensureGeminiApiKeysTable(PDO $pdo): void
@@ -642,6 +661,7 @@ final class SchemaBootstrap
 
         self::tryAddIndex($pdo, 'ALTER TABLE `gemini_api_keys` ADD UNIQUE KEY `uniq_gemini_api_key` (`api_key`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `gemini_api_keys` ADD KEY `idx_gemini_keys_active` (`is_active`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `gemini_api_keys` ADD KEY `idx_gemini_keys_active_last_used` (`is_active`, `last_used_at`)');
     }
 
     private static function ensureGeminiModelsTable(PDO $pdo): void
@@ -694,6 +714,7 @@ final class SchemaBootstrap
 
         self::tryAddIndex($pdo, 'ALTER TABLE `gemini_models` ADD UNIQUE KEY `uniq_gemini_model_name` (`model_name`)');
         self::tryAddIndex($pdo, 'ALTER TABLE `gemini_models` ADD KEY `idx_gemini_models_active` (`is_active`)');
+        self::tryAddIndex($pdo, 'ALTER TABLE `gemini_models` ADD KEY `idx_gemini_models_active_last_used` (`is_active`, `last_used_at`)');
     }
 
     private static function tryAddIndex(PDO $pdo, string $sql): void

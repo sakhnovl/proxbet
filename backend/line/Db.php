@@ -16,6 +16,10 @@ use Proxbet\Core\Exceptions\ConfigurationException;
 
 final class Db
 {
+    private const UPSERT_BATCH_SIZE_DEFAULT = 100;
+    private const UPSERT_BATCH_SIZE_MIN = 10;
+    private const UPSERT_BATCH_SIZE_MAX = 1000;
+
     public static function connectFromEnv(): PDO
     {
         $host = getenv('DB_HOST') ?: '';
@@ -350,8 +354,7 @@ final class Db
             }
         }
 
-        // Process in batches of 100 for optimal performance
-        $batchSize = 100;
+        $batchSize = self::resolveUpsertBatchSize();
         $batches = array_chunk($matches, $batchSize);
 
         $pdo->beginTransaction();
@@ -441,5 +444,13 @@ final class Db
         }
 
         return compact('inserted', 'updated', 'skipped');
+    }
+
+    private static function resolveUpsertBatchSize(): int
+    {
+        $raw = getenv('MATCH_UPSERT_BATCH_SIZE');
+        $value = is_string($raw) && $raw !== '' ? (int) $raw : self::UPSERT_BATCH_SIZE_DEFAULT;
+
+        return max(self::UPSERT_BATCH_SIZE_MIN, min(self::UPSERT_BATCH_SIZE_MAX, $value));
     }
 }

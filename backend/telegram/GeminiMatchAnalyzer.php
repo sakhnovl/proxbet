@@ -8,6 +8,9 @@ use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\GeminiAnalyzer as Algorithm
 
 final class GeminiMatchAnalyzer
 {
+    private const MODE_FULL = 'full';
+    private const MODE_CHANNEL_SHORT = 'channel_short';
+
     public function __construct(
         private string $apiKey,
         private string $model = 'gemini-2.0-flash',
@@ -19,18 +22,19 @@ final class GeminiMatchAnalyzer
      * @param array<string,mixed> $context
      * @return array{provider:string,model:string,prompt:string,response:string}
      */
-    public function analyze(array $context): array
+    public function analyze(array $context, string $mode = self::MODE_FULL): array
     {
         if ($this->apiKey === '') {
             throw new \RuntimeException('GEMINI_API_KEY is not configured');
         }
 
+        $mode = $this->normalizeMode($mode);
         $algorithmOneExplainAnalysis = $this->analyzeAlgorithmOneWithExplainPrompt($context);
         if ($algorithmOneExplainAnalysis !== null) {
             return $algorithmOneExplainAnalysis;
         }
 
-        $prompt = $this->buildPrompt($context);
+        $prompt = $this->buildPrompt($context, $mode);
         $url = sprintf(
             'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s',
             rawurlencode($this->model),
@@ -90,7 +94,15 @@ final class GeminiMatchAnalyzer
             throw new \RuntimeException('Gemini returned empty analysis');
         }
 
-        $response = $this->alignResponseWithScanner(trim($response), $context);
+        $response = trim($response);
+        if ($mode === self::MODE_CHANNEL_SHORT) {
+            $response = $this->normalizeShortText($response);
+            if ($response === '') {
+                throw new \RuntimeException('Gemini returned empty channel summary response');
+            }
+        } else {
+            $response = $this->alignResponseWithScanner($response, $context);
+        }
 
         return [
             'provider' => 'gemini',
@@ -134,7 +146,7 @@ final class GeminiMatchAnalyzer
     /**
      * @param array<string,mixed> $context
      */
-    private function buildPrompt(array $context): string
+    private function buildPrompt(array $context, string $mode = self::MODE_FULL): string
     {
         $algorithmId = max(1, (int) ($context['algorithm_id'] ?? 1));
         if ($algorithmId === 3) {
@@ -143,6 +155,12 @@ final class GeminiMatchAnalyzer
 
         if ($algorithmId === 2) {
             return $this->buildAlgorithmTwoPrompt($context);
+        }
+
+        if ($algorithmId === 4) {
+            return $mode === self::MODE_CHANNEL_SHORT
+                ? $this->buildAlgorithmXChannelShortPrompt($context)
+                : $this->buildAlgorithmXPrompt($context);
         }
 
         throw new \LogicException('AlgorithmOne prompt is handled by dedicated explain mode');
@@ -352,6 +370,128 @@ final class GeminiMatchAnalyzer
     }
 
     /**
+     * @param array<string,mixed> $context
+     */
+    private function buildAlgorithmXPrompt(array $context): string
+    {
+        $algorithmData = is_array($context['scanner_algorithm_data'] ?? null) ? $context['scanner_algorithm_data'] : [];
+        $probability = $this->value($algorithmData['probability'] ?? ($context['scanner_probability'] ?? null));
+        $aiReason = $this->value($context['scanner_reason'] ?? null);
+        $interpretation = $this->value($algorithmData['interpretation'] ?? null);
+        $debug = is_array($algorithmData['debug'] ?? null) ? $algorithmData['debug'] : [];
+
+        $lines = [
+            'Ты футбольный live-аналитик и оцениваешь только сигнал AlgorithmX.',
+            'AlgorithmX прогнозирует вероятность гола до конца первого тайма по текущей интенсивности матча.',
+            '',
+            'Твоя задача:',
+            '- проверить, подтверждает ли живая картина матча сигнал AlgorithmX;',
+            '- объяснить, есть ли реальное давление на гол именно сейчас;',
+            '- отметить, не завышает ли алгоритм вероятность из-за шума в статистике;',
+            '- дать практичный вывод без обещаний гарантированного исхода.',
+            '',
+            'Как думать:',
+            '- опирайся только на текущие live-метрики и контекст первого тайма;',
+            '- AIS важен, но оценивай, поддерживается ли он качеством моментов;',
+            '- опасные атаки без ударов в створ и без угловых не переоценивай;',
+            '- если матч уже выглядит открытым и темп устойчивый, это плюс;',
+            '- если давление одностороннее, но мяч плохо доходит до удара, это риск;',
+            '- если времени мало или счёт ломает сценарий, отмечай это явно.',
+            '',
+            'Формат ответа соблюдай строго:',
+            '',
+            'Вердикт: [Подходит / Сомнительно / Не подходит]',
+            'Уверенность: [0-100]%',
+            '',
+            'Причины:',
+            '- причина 1',
+            '- причина 2',
+            '- причина 3',
+            '',
+            'Риск:',
+            '- 1 короткий пункт',
+            '',
+            'Контекст матча:',
+            'Алгоритм: AlgorithmX',
+            'Матч: ' . $this->value($context['home'] ?? null) . ' vs ' . $this->value($context['away'] ?? null),
+            'Лига: ' . $this->value($context['liga'] ?? null),
+            'Страна: ' . $this->value($context['country'] ?? null),
+            'Время: ' . $this->value($context['time'] ?? null),
+            'Статус: ' . $this->value($context['match_status'] ?? null),
+            'Счёт 1-го тайма: ' . $this->score($context['live_ht_hscore'] ?? null, $context['live_ht_ascore'] ?? null),
+            'Счёт live: ' . $this->score($context['live_hscore'] ?? null, $context['live_ascore'] ?? null),
+            '',
+            'Сигнал AlgorithmX:',
+            'Решение сканера: ' . $this->value($context['scanner_bet'] ?? null),
+            'Вероятность гола: ' . $probability,
+            'Причина сканера: ' . $aiReason,
+            'Интерпретация: ' . $interpretation,
+            '',
+            'Live-метрики:',
+            'Опасные атаки: ' . $this->value($algorithmData['dangerous_attacks_home'] ?? null) . ' / ' . $this->value($algorithmData['dangerous_attacks_away'] ?? null),
+            'Удары всего: ' . $this->value($algorithmData['shots_home'] ?? null) . ' / ' . $this->value($algorithmData['shots_away'] ?? null),
+            'Удары в створ: ' . $this->value($algorithmData['shots_on_target_home'] ?? null) . ' / ' . $this->value($algorithmData['shots_on_target_away'] ?? null),
+            'Угловые: ' . $this->value($algorithmData['corners_home'] ?? null) . ' / ' . $this->value($algorithmData['corners_away'] ?? null),
+            '',
+            'Отладка AlgorithmX:',
+            'AIS home: ' . $this->value($debug['ais_home'] ?? null),
+            'AIS away: ' . $this->value($debug['ais_away'] ?? null),
+            'AIS total: ' . $this->value($debug['ais_total'] ?? null),
+            'AIS rate: ' . $this->value($debug['ais_rate'] ?? null),
+            'Base probability: ' . $this->value($debug['base_prob'] ?? null),
+            'Time remaining: ' . $this->value($debug['time_remaining'] ?? null),
+            'Time factor: ' . $this->value($debug['time_factor'] ?? null),
+            'Score modifier: ' . $this->value($debug['score_modifier'] ?? null),
+            'Dry period applied: ' . $this->value($debug['dry_period_applied'] ?? null),
+            '',
+            'Важно:',
+            '- оцени именно сигнал AlgorithmX, а не общий прогноз на матч;',
+            '- если согласен со сканером, объясни за счёт каких метрик;',
+            '- если не согласен, покажи, какие данные делают сигнал хрупким.',
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     */
+    private function buildAlgorithmXChannelShortPrompt(array $context): string
+    {
+        $algorithmData = is_array($context['scanner_algorithm_data'] ?? null) ? $context['scanner_algorithm_data'] : [];
+        $debug = is_array($algorithmData['debug'] ?? null) ? $algorithmData['debug'] : [];
+
+        $lines = [
+            'You are writing a very short Telegram channel note for an AlgorithmX first-half goal signal.',
+            'Return exactly one short line in Russian, no markdown, no emojis, максимум 10 слов.',
+            'The line must summarize whether the current live pressure really supports the signal.',
+            'Do not mention AI, Gemini, JSON, or explain the full reasoning.',
+            '',
+            'Match:',
+            'Teams: ' . $this->value($context['home'] ?? null) . ' vs ' . $this->value($context['away'] ?? null),
+            'Minute: ' . $this->value($algorithmData['minute'] ?? ($context['time'] ?? null)),
+            'Score: ' . $this->score($context['live_ht_hscore'] ?? null, $context['live_ht_ascore'] ?? null),
+            'Probability: ' . $this->value($algorithmData['probability'] ?? null),
+            'Reason: ' . $this->value($context['scanner_reason'] ?? null),
+            'Dangerous attacks: ' . $this->value($algorithmData['dangerous_attacks_home'] ?? null) . ' / ' . $this->value($algorithmData['dangerous_attacks_away'] ?? null),
+            'Shots on target: ' . $this->value($algorithmData['shots_on_target_home'] ?? null) . ' / ' . $this->value($algorithmData['shots_on_target_away'] ?? null),
+            'Corners: ' . $this->value($algorithmData['corners_home'] ?? null) . ' / ' . $this->value($algorithmData['corners_away'] ?? null),
+            'AIS rate: ' . $this->value($debug['ais_rate'] ?? null),
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    private function normalizeMode(string $mode): string
+    {
+        $normalized = strtolower(trim($mode));
+
+        return in_array($normalized, [self::MODE_FULL, self::MODE_CHANNEL_SHORT], true)
+            ? $normalized
+            : self::MODE_FULL;
+    }
+
+    /**
      * @param array<string,mixed> $decoded
      */
     private function extractText(array $decoded): ?string
@@ -384,6 +524,49 @@ final class GeminiMatchAnalyzer
         }
 
         return implode("\n", $chunks);
+    }
+
+    private function normalizeShortText(string $response): string
+    {
+        $text = trim($response);
+        if ($text === '') {
+            return '';
+        }
+
+        if (str_starts_with($text, '```')) {
+            $lines = preg_split("/\r\n|\n|\r/", $text);
+            if (is_array($lines) && count($lines) >= 3) {
+                if (str_starts_with(trim((string) $lines[0]), '```')) {
+                    array_shift($lines);
+                }
+
+                $lastIndex = array_key_last($lines);
+                if ($lastIndex !== null && trim((string) $lines[$lastIndex]) === '```') {
+                    unset($lines[$lastIndex]);
+                }
+
+                $text = trim(implode("\n", $lines));
+            }
+        }
+
+        $firstLine = preg_split("/\r\n|\n|\r/", $text, 2);
+        if (is_array($firstLine) && isset($firstLine[0])) {
+            $text = $firstLine[0];
+        }
+
+        $text = preg_replace('/\s+/', ' ', $text) ?? $text;
+        $text = trim($text, " \t\n\r\0\x0B\"'`");
+
+        $words = preg_split('/\s+/u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        if (!is_array($words) || $words === []) {
+            return '';
+        }
+
+        if (count($words) > 10) {
+            $words = array_slice($words, 0, 10);
+        }
+
+        return trim(implode(' ', $words));
     }
 
     private function value(mixed $value): string

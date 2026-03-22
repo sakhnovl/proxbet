@@ -9,27 +9,15 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap/autoload.php';
 require_once __DIR__ . '/bootstrap/runtime.php';
-require_once __DIR__ . '/cors.php';
+require_once __DIR__ . '/bootstrap/http.php';
 require_once __DIR__ . '/security/RateLimiter.php';
-require_once __DIR__ . '/security/SecurityHeaders.php';
 require_once __DIR__ . '/security/RequestValidator.php';
 
 use Proxbet\Line\Db;
 use Proxbet\Security\RateLimiter;
-use Proxbet\Security\SecurityHeaders;
 use Proxbet\Security\RequestValidator;
 
-proxbet_bootstrap_env();
-
-// Apply security headers
-SecurityHeaders::apply(isApi: true);
-
-// Validate request size
-RequestValidator::validateRequestSize();
-
-// CORS
-header('Content-Type: application/json; charset=utf-8');
-proxbetHandleCors(['GET', 'OPTIONS'], ['Content-Type']);
+proxbet_bootstrap_http_endpoint(['GET', 'OPTIONS'], ['Content-Type']);
 
 // Rate limiting
 $rateLimiter = new RateLimiter(
@@ -38,7 +26,7 @@ $rateLimiter = new RateLimiter(
     windowSeconds: 60
 );
 
-$clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$clientIp = proxbet_get_client_ip();
 if (!$rateLimiter->check('public_api:' . $clientIp)) {
     http_response_code(429);
     header('Retry-After: 60');
@@ -67,10 +55,9 @@ try {
     ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     
 } catch (\Throwable $e) {
-    $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
     http_response_code(500);
     echo json_encode([
         'ok' => false,
-        'error' => $sanitizedError
+        'error' => RequestValidator::sanitizeErrorMessage($e->getMessage())
     ], JSON_THROW_ON_ERROR);
 }

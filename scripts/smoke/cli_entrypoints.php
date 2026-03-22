@@ -54,7 +54,7 @@ $cases = [
             'TELEGRAM_BOT_TOKEN' => '',
         ],
         'expectedExitCode' => 1,
-        'expectedFragments' => ['TELEGRAM_BOT_TOKEN is not set in .env'],
+        'expectedFragments' => ['Missing required env: TELEGRAM_BOT_TOKEN'],
     ],
 ];
 

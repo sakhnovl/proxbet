@@ -46,10 +46,10 @@ fi
 echo "Starting database restore..."
 
 # Restore from compressed backup
-if [ -n "$DB_PASSWORD" ]; then
-    gunzip < "$BACKUP_FILE" | mysql -h "$DB_HOST" \
-                                    -u "$DB_USER" \
-                                    -p"$DB_PASSWORD" \
+if [ -n "$DB_PASS" ]; then
+    mysql --host="$DB_HOST" \
+          --user="$DB_USER" \
+                                    -p"$DB_PASS" \
                                     "$DB_NAME"
 else
     gunzip < "$BACKUP_FILE" | mysql -h "$DB_HOST" \

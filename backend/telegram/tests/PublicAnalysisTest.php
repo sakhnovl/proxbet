@@ -100,4 +100,54 @@ final class PublicAnalysisTest extends TestCase
         $this->assertSame('low_accuracy', $scannerAlgorithmData['red_flag']);
         $this->assertSame(['low_accuracy'], $scannerAlgorithmData['red_flags']);
     }
+
+    public function testEnrichAnalysisContextWithScannerBuildsAlgorithmXContextFromSavedPayload(): void
+    {
+        $context = [
+            'algorithm_id' => 4,
+            'bet_message_id' => 555,
+            'home' => 'Pressure United',
+            'away' => 'Rapid City',
+            'liga' => 'AlgorithmX Premier',
+            'country' => 'Testland',
+            'time' => '14:00',
+            'match_status' => 'In Play',
+            'live_ht_hscore' => 0,
+            'live_ht_ascore' => 0,
+            'live_hscore' => 0,
+            'live_ascore' => 0,
+            'algorithm_payload_json' => json_encode([
+                'minute' => 14,
+                'dangerous_attacks_home' => 40,
+                'dangerous_attacks_away' => 35,
+                'shots_home' => 22,
+                'shots_away' => 18,
+                'shots_on_target_home' => 10,
+                'shots_on_target_away' => 8,
+                'corners_home' => 7,
+                'corners_away' => 6,
+                'probability' => 0.8366,
+                'interpretation' => 'Очень высокая активность',
+                'debug' => [
+                    'ais_rate' => 3.35,
+                    'decision_reason' => 'High goal probability (83.7%). Strong attacking intensity (AIS rate: 3.35). Recommended bet.',
+                ],
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ];
+
+        $result = enrichAnalysisContextWithScanner($context);
+
+        $this->assertSame(84, $result['scanner_probability']);
+        $this->assertSame('yes', $result['scanner_bet']);
+        $this->assertStringContainsString('Recommended bet', $result['scanner_reason']);
+        $this->assertSame('algorithmx_live_pressure', $result['scanner_algorithm_basis']);
+        $this->assertArrayHasKey('scanner_algorithm_data', $result);
+        $this->assertArrayNotHasKey('algorithm_one_explain_context', $result);
+
+        $scannerAlgorithmData = $result['scanner_algorithm_data'];
+        $this->assertSame(14, $scannerAlgorithmData['minute']);
+        $this->assertSame(40, $scannerAlgorithmData['dangerous_attacks_home']);
+        $this->assertSame(0.8366, $scannerAlgorithmData['probability']);
+        $this->assertSame(3.35, $scannerAlgorithmData['debug']['ais_rate']);
+    }
 }

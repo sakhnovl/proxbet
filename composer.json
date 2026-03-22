@@ -29,7 +29,11 @@
     "test:scanner": "phpunit -c backend/scanner/tests/phpunit.xml",
     "test:smoke": "@php scripts/smoke/cli_entrypoints.php",
     "test:statistic": "phpunit -c backend/statistic/tests/phpunit.xml",
-    "test:telegram": "phpunit -c backend/telegram/tests/phpunit.xml"
+    "test:telegram": "phpunit -c backend/telegram/tests/phpunit.xml",
+    "test:security": "@php scripts/task.php test:security",
+    "test:e2e": "@php scripts/task.php test:e2e",
+    "test:regression": "@php scripts/task.php test:regression",
+    "validate": "@php scripts/task.php validate"
   },
   "minimum-stability": "stable",
   "prefer-stable": true

@@ -20,6 +20,8 @@ final class LogFilter
         '/api[_-]?key["\']?\s*[:=]\s*["\']?([a-zA-Z0-9\-_]{20,})["\']?/i',
         '/token["\']?\s*[:=]\s*["\']?([a-zA-Z0-9\-_]{20,})["\']?/i',
         '/password["\']?\s*[:=]\s*["\']?([^\s"\']{8,})["\']?/i',
+        '/secret["\']?\s*[:=]\s*["\']?([^\s"\']{8,})["\']?/i',
+        '/authorization["\']?\s*[:=]\s*["\']?bearer\s+([a-zA-Z0-9\-_\.]{10,})/i',
         '/bearer\s+([a-zA-Z0-9\-_\.]{20,})/i',
         
         // Database credentials
@@ -63,7 +65,7 @@ final class LogFilter
             if (is_array($value)) {
                 $filtered[$key] = self::filterArray($value);
             } elseif (is_string($value)) {
-                $filtered[$key] = self::filter($value);
+                $filtered[$key] = self::truncate(self::filter($value));
             } else {
                 $filtered[$key] = $value;
             }
@@ -119,6 +121,15 @@ final class LogFilter
         }
 
         $filtered = self::filterArray($data);
-        return json_encode($filtered, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return (string) json_encode($filtered, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    private static function truncate(string $value, int $maxLength = 512): string
+    {
+        if (mb_strlen($value) <= $maxLength) {
+            return $value;
+        }
+
+        return mb_substr($value, 0, $maxLength) . '...[truncated]';
     }
 }

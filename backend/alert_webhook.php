@@ -3,11 +3,15 @@
 declare(strict_types=1);
 
 /**
- * Alertmanager webhook handler
- * Receives alerts from Prometheus Alertmanager and sends to Telegram
+ * Alertmanager webhook handler (Protected)
+ * 
+ * Receives alerts from Prometheus Alertmanager and sends to Telegram.
+ * Should be protected with a secret token to prevent unauthorized access.
  */
 
-require_once __DIR__ . '/line/env.php';
+require_once __DIR__ . '/bootstrap/autoload.php';
+require_once __DIR__ . '/bootstrap/runtime.php';
+require_once __DIR__ . '/bootstrap/http.php';
 require_once __DIR__ . '/core/StructuredLogger.php';
 
 use Proxbet\Core\StructuredLogger;
@@ -15,11 +19,40 @@ use Proxbet\Core\StructuredLogger;
 $logger = StructuredLogger::getInstance();
 $logger->generateCorrelationId();
 
+proxbet_bootstrap_http_endpoint(['POST'], ['Authorization', 'Content-Type', 'X-Webhook-Secret']);
+
+// ── Authentication ─────────────────────────────────────────────────────────
+
+$webhookSecret = (string) (getenv('ALERT_WEBHOOK_SECRET') ?: '');
+
+if ($webhookSecret !== '') {
+    $providedSecret = proxbet_extract_bearer_token();
+    
+    // Also check X-Webhook-Secret header (alternative method)
+    $webhookSecretHeader = $_SERVER['HTTP_X_WEBHOOK_SECRET'] ?? '';
+    if ($webhookSecretHeader !== '') {
+        $providedSecret = $webhookSecretHeader;
+    }
+    
+    // Validate secret
+    if ($providedSecret === '' || !hash_equals($webhookSecret, $providedSecret)) {
+        http_response_code(401);
+        $logger->warning('Unauthorized webhook attempt', [
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+        ]);
+        echo json_encode(['error' => 'Unauthorized'], JSON_THROW_ON_ERROR);
+        exit;
+    }
+}
+
+// ── Process Webhook ────────────────────────────────────────────────────────
+
 // Get webhook payload
 $payload = file_get_contents('php://input');
 if ($payload === false) {
     http_response_code(400);
     $logger->error('Failed to read webhook payload');
+    echo json_encode(['error' => 'Failed to read payload'], JSON_THROW_ON_ERROR);
     exit;
 }
 
@@ -27,6 +60,7 @@ $data = json_decode($payload, true);
 if ($data === null) {
     http_response_code(400);
     $logger->error('Invalid JSON payload');
+    echo json_encode(['error' => 'Invalid JSON'], JSON_THROW_ON_ERROR);
     exit;
 }
 

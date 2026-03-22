@@ -50,10 +50,13 @@ class RateLimitingMiddleware
         }
 
         // Also check DDoS protection
-        if (!$this->ddosProtection->checkRequest($identifier)) {
+        try {
+            $this->ddosProtection->checkRequest($identifier, $endpoint);
+        } catch (\Throwable $e) {
             $this->logger->warning('DDoS protection triggered', [
                 'endpoint' => $endpoint,
-                'identifier' => $identifier
+                'identifier' => $identifier,
+                'error' => $e->getMessage(),
             ]);
             return false;
         }

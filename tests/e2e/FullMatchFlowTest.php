@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Tests\E2E;
 
 use PHPUnit\Framework\TestCase;
+use Proxbet\Tests\Support\HttpRuntimeAwareTrait;
 
 /**
  * E2E tests for complete match flow from parsing to notification.
@@ -12,17 +13,28 @@ use PHPUnit\Framework\TestCase;
  */
 final class FullMatchFlowTest extends TestCase
 {
+    use HttpRuntimeAwareTrait;
+
     private string $apiBaseUrl;
     private string $adminToken;
 
     protected function setUp(): void
     {
         $this->apiBaseUrl = getenv('TEST_API_URL') ?: 'http://localhost:8080';
-        $this->adminToken = getenv('TEST_ADMIN_TOKEN') ?: 'test_token';
+        $this->adminToken = (string) (
+            getenv('TEST_ADMIN_TOKEN')
+            ?: getenv('ADMIN_API_TOKEN')
+            ?: getenv('ADMIN_PASSWORD')
+            ?: ''
+        );
         
         // Skip if not in E2E test environment
         if (getenv('RUN_E2E_TESTS') !== '1') {
             $this->markTestSkipped('E2E tests disabled. Set RUN_E2E_TESTS=1 to enable.');
+        }
+
+        if (!$this->isRuntimeAvailable($this->apiBaseUrl)) {
+            $this->markTestSkipped('E2E tests require an available HTTP runtime. Configure TEST_API_URL or start the app.');
         }
     }
 
@@ -46,6 +58,10 @@ final class FullMatchFlowTest extends TestCase
 
     public function testAdminBanManagement(): void
     {
+        if ($this->adminToken === '') {
+            $this->markTestSkipped('Admin E2E tests require TEST_ADMIN_TOKEN or runtime admin credentials.');
+        }
+
         // Create ban
         $banData = [
             'country' => 'Test Country E2E',
@@ -94,8 +110,19 @@ final class FullMatchFlowTest extends TestCase
 
     public function testMetricsEndpoint(): void
     {
-        $response = $this->makeRequest('GET', '/backend/metrics.php');
-        
+        $headers = [];
+        $metricsToken = (string) getenv('TEST_METRICS_TOKEN');
+
+        if ($metricsToken !== '') {
+            $headers[] = 'Authorization: Bearer ' . $metricsToken;
+        }
+
+        $response = $this->makeRequest('GET', '/backend/metrics.php', null, $headers);
+
+        if ($metricsToken === '' && $response['status'] === 401) {
+            $this->markTestSkipped('Metrics endpoint is protected in this environment. Set TEST_METRICS_TOKEN to validate it.');
+        }
+
         $this->assertEquals(200, $response['status']);
         $this->assertStringContainsString('proxbet_', $response['body']);
     }

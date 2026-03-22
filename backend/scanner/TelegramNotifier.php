@@ -21,13 +21,15 @@ final class TelegramNotifier
     private array $sentMatches = [];
     private ?BetMessageRepository $repository;
     private ?AlgorithmOneChannelVerdictGenerator $algorithmOneVerdictGenerator;
+    private ?AlgorithmXChannelVerdictGenerator $algorithmXVerdictGenerator;
 
     public function __construct(
         string $token,
         string $channelId,
         string $statePath,
         ?BetMessageRepository $repository = null,
-        ?AlgorithmOneChannelVerdictGenerator $algorithmOneVerdictGenerator = null
+        ?AlgorithmOneChannelVerdictGenerator $algorithmOneVerdictGenerator = null,
+        ?AlgorithmXChannelVerdictGenerator $algorithmXVerdictGenerator = null
     )
     {
         $this->apiBase = 'https://api.telegram.org/bot' . $token;
@@ -35,6 +37,7 @@ final class TelegramNotifier
         $this->statePath = $statePath;
         $this->repository = $repository;
         $this->algorithmOneVerdictGenerator = $algorithmOneVerdictGenerator;
+        $this->algorithmXVerdictGenerator = $algorithmXVerdictGenerator;
         $this->loadSentMatches();
     }
 
@@ -56,7 +59,7 @@ final class TelegramNotifier
             return;
         }
 
-        $aiVerdict = $this->buildAlgorithmOneAiVerdict($match);
+        $aiVerdict = $this->buildAiVerdict($match);
         $message = $this->formatMessage($match, $aiVerdict);
 
         $sent = false;
@@ -156,6 +159,10 @@ final class TelegramNotifier
 
         if ($algorithmId === 3) {
             return $this->formatAlgorithmThreeMessage($match);
+        }
+
+        if ($algorithmId === 4) {
+            return $this->formatAlgorithmXMessage($match, $aiVerdict);
         }
 
         return $this->formatAlgorithmOneMessage($match, $aiVerdict);
@@ -362,6 +369,50 @@ final class TelegramNotifier
     /**
      * @param array<string,mixed> $match
      */
+    private function formatAlgorithmXMessage(array $match, ?string $aiVerdict = null): string
+    {
+        $header = $this->buildHeader($match, '🔥 <b>СИГНАЛ: GOAL PROBABILITY В 1-М ТАЙМЕ</b>');
+        $algorithmData = is_array($match['algorithm_data'] ?? null) ? $match['algorithm_data'] : [];
+        $debug = is_array($algorithmData['debug'] ?? null) ? $algorithmData['debug'] : [];
+
+        $probability = sprintf('%.0f%%', ((float) ($match['probability'] ?? 0)) * 100);
+        $aisRate = sprintf('%.2f', (float) ($debug['ais_rate'] ?? 0));
+        $aisTotal = sprintf('%.2f', (float) ($debug['ais_total'] ?? 0));
+        $baseProb = sprintf('%.2f', (float) ($debug['base_prob'] ?? 0));
+        $timeFactor = sprintf('%.2f', (float) ($debug['time_factor'] ?? 0));
+        $scoreModifier = sprintf('%.2f', (float) ($debug['score_modifier'] ?? 0));
+        $interpretation = htmlspecialchars((string) ($algorithmData['interpretation'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $reason = htmlspecialchars((string) ($match['decision']['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+
+        $dangerousAttacksHome = (int) ($algorithmData['dangerous_attacks_home'] ?? 0);
+        $dangerousAttacksAway = (int) ($algorithmData['dangerous_attacks_away'] ?? 0);
+        $shotsHome = (int) ($algorithmData['shots_home'] ?? 0);
+        $shotsAway = (int) ($algorithmData['shots_away'] ?? 0);
+        $shotsOnTargetHome = (int) ($algorithmData['shots_on_target_home'] ?? 0);
+        $shotsOnTargetAway = (int) ($algorithmData['shots_on_target_away'] ?? 0);
+        $cornersHome = (int) ($algorithmData['corners_home'] ?? 0);
+        $cornersAway = (int) ($algorithmData['corners_away'] ?? 0);
+
+        return $header
+            . $this->renderAiVerdictBlock($aiVerdict)
+            . "📊 <b>Вероятность гола: {$probability}</b>\n"
+            . "├ AIS rate: {$aisRate}\n"
+            . "├ AIS total: {$aisTotal}\n"
+            . "├ Base prob: {$baseProb}\n"
+            . "├ Time factor: {$timeFactor}\n"
+            . "└ Score modifier: {$scoreModifier}\n\n"
+            . "📈 <b>Live pressure</b>\n"
+            . "├ Опасные атаки: {$dangerousAttacksHome} / {$dangerousAttacksAway}\n"
+            . "├ Удары: {$shotsHome} / {$shotsAway}\n"
+            . "├ В створ: {$shotsOnTargetHome} / {$shotsOnTargetAway}\n"
+            . "└ Угловые: {$cornersHome} / {$cornersAway}\n\n"
+            . "🧠 <b>Интерпретация</b>: {$interpretation}\n"
+            . "📝 <b>Причина сигнала</b>: {$reason}";
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
     private function buildHeader(array $match, string $title): string
     {
         $algorithmId = (int) ($match['algorithm_id'] ?? 1);
@@ -452,23 +503,35 @@ final class TelegramNotifier
             . "──────────────\n\n";
     }
 
-    private function buildAlgorithmOneAiVerdict(array $match): ?string
+    private function buildAiVerdict(array $match): ?string
     {
-        if ($this->algorithmOneVerdictGenerator === null) {
-            return null;
+        $algorithmId = (int) ($match['algorithm_id'] ?? 1);
+
+        if ($algorithmId === 1 && $this->algorithmOneVerdictGenerator !== null) {
+            try {
+                return $this->algorithmOneVerdictGenerator->generate($match);
+            } catch (\Throwable $e) {
+                Logger::info('Failed to build AlgorithmOne AI verdict for channel message', [
+                    'match_id' => (int) ($match['match_id'] ?? 0),
+                    'algorithm_id' => $algorithmId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
-        try {
-            return $this->algorithmOneVerdictGenerator->generate($match);
-        } catch (\Throwable $e) {
-            Logger::info('Failed to build AlgorithmOne AI verdict for channel message', [
-                'match_id' => (int) ($match['match_id'] ?? 0),
-                'algorithm_id' => (int) ($match['algorithm_id'] ?? 1),
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
+        if ($algorithmId === 4 && $this->algorithmXVerdictGenerator !== null) {
+            try {
+                return $this->algorithmXVerdictGenerator->generate($match);
+            } catch (\Throwable $e) {
+                Logger::info('Failed to build AlgorithmX AI verdict for channel message', [
+                    'match_id' => (int) ($match['match_id'] ?? 0),
+                    'algorithm_id' => $algorithmId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
+
+        return null;
     }
 
     private function buildAlgorithmPayload(array $match): ?array

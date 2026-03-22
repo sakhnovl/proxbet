@@ -33,6 +33,11 @@ final class TelegramRateLimiter
      */
     public function checkUser(int $userId): bool
     {
+        return $this->checkLimit($userId);
+    }
+
+    public function checkLimit(int $userId, string $command = ''): bool
+    {
         $file = $this->getUserFile($userId);
         $now = time();
 

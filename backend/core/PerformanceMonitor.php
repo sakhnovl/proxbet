@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Proxbet\Core;
 
+require_once __DIR__ . '/../security/LogFilter.php';
+
+use Proxbet\Security\LogFilter;
+
 /**
  * Performance monitoring for tracking execution times and resource usage.
  */
@@ -137,7 +141,7 @@ final class PerformanceMonitor
     {
         $metrics = self::getMetrics();
         $prefix = $context !== '' ? "[{$context}] " : '';
-
-        error_log($prefix . 'Performance Metrics: ' . json_encode($metrics));
+        $payload = LogFilter::filterJson((string) json_encode($metrics, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        error_log($prefix . 'Performance Metrics: ' . $payload);
     }
 }

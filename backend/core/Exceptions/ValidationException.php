@@ -9,4 +9,14 @@ namespace Proxbet\Core\Exceptions;
  */
 class ValidationException extends ProxbetException
 {
+    /**
+     * @param array<string,mixed> $details
+     */
+    public function __construct(
+        string $message = 'Validation failed',
+        array $details = [],
+        ?\Throwable $previous = null
+    ) {
+        parent::__construct($message, 0, true, $details, $previous, 400);
+    }
 }

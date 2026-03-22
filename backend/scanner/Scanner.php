@@ -74,15 +74,15 @@ final class Scanner
             'bet_false_probability_sum' => 0.0,
         ];
 
-        $matches = $this->extractor->getActiveMatches();
-        $total = count($matches);
+        $batchSize = DataExtractor::resolveConfiguredBatchSize();
+        $total = $this->extractor->countActiveMatches();
         $analyzed = 0;
         $signals = 0;
         $results = [];
 
-        Logger::info('Scanner started', ['total_matches' => $total]);
+        Logger::info('Scanner started', ['total_matches' => $total, 'batch_size' => $batchSize]);
 
-        foreach ($matches as $match) {
+        foreach ($this->extractor->getActiveMatchesGenerator($batchSize) as $match) {
             try {
                 $matchResults = $this->scanMatch($match);
                 if ($matchResults === []) {

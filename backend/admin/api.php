@@ -16,82 +16,36 @@ declare(strict_types=1);
  *   POST ?action=refresh_stats_batch body: {limit,offset,force}
  *   GET  ?action=stats_overview
  *
- * Auth: Bearer token in Authorization header OR ?token= query param.
- * Token must match ADMIN_PASSWORD from .env
+ * Auth: Bearer token in Authorization header only.
+ * Canonical secret: ADMIN_API_TOKEN (legacy fallback: ADMIN_PASSWORD).
  */
-
-// ── Bootstrap ──────────────────────────────────────────────────────────────
 
 require_once __DIR__ . '/../bootstrap/autoload.php';
 require_once __DIR__ . '/../bootstrap/runtime.php';
-require_once __DIR__ . '/../cors.php';
+require_once __DIR__ . '/../bootstrap/http.php';
 require_once __DIR__ . '/../security/RateLimiter.php';
-require_once __DIR__ . '/../security/CsrfProtection.php';
 require_once __DIR__ . '/../security/InputValidator.php';
-require_once __DIR__ . '/../security/SecurityHeaders.php';
 require_once __DIR__ . '/../security/RequestValidator.php';
 require_once __DIR__ . '/../security/AuditLogger.php';
+require_once __DIR__ . '/AdminAuthenticator.php';
+require_once __DIR__ . '/Handlers/BanHandler.php';
+require_once __DIR__ . '/Handlers/StatsHandler.php';
 
+use Proxbet\Admin\AdminAuthenticator;
+use Proxbet\Admin\Handlers\BanHandler;
+use Proxbet\Admin\Handlers\StatsHandler;
 use Proxbet\Line\Db;
-use Proxbet\Statistic\StatisticServiceFactory;
-use Proxbet\Security\RateLimiter;
-use Proxbet\Security\CsrfProtection;
-use Proxbet\Security\InputValidator;
-use Proxbet\Security\SecurityHeaders;
-use Proxbet\Security\RequestValidator;
 use Proxbet\Security\AuditLogger;
+use Proxbet\Security\InputValidator;
+use Proxbet\Security\RateLimiter;
+use Proxbet\Security\RequestValidator;
 
-proxbet_bootstrap_env();
+proxbet_bootstrap_http_endpoint(['GET', 'POST', 'OPTIONS'], ['Authorization', 'Content-Type']);
 
-// ── Security Headers ───────────────────────────────────────────────────────
-
-SecurityHeaders::apply(isApi: true);
-
-// ── Request Size Validation ────────────────────────────────────────────────
-
-RequestValidator::validateRequestSize();
-
-// ── CORS / Headers ─────────────────────────────────────────────────────────
-
-header('Content-Type: application/json; charset=utf-8');
-proxbetHandleCors(['GET', 'POST', 'OPTIONS'], ['Authorization', 'Content-Type']);
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function jsonOk(mixed $data): never
-{
-    echo json_encode(['ok' => true, 'data' => $data], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    exit;
-}
-
-function jsonError(string $message, int $code = 400): never
-{
-    http_response_code($code);
-    echo json_encode(['ok' => false, 'error' => $message], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    exit;
-}
-
-function getBody(): array
-{
-    $raw = file_get_contents('php://input');
-    if ($raw === '' || $raw === false) {
-        return [];
-    }
-    $decoded = json_decode($raw, true);
-    return is_array($decoded) ? $decoded : [];
-}
-
-function sanitizeString(?string $value): ?string
-{
-    return InputValidator::sanitizeString($value, 255);
-}
-
-function sanitizeLike(?string $value): ?string
+function admin_sanitize_like(?string $value): ?string
 {
     return InputValidator::sanitizeLike($value);
 }
-
-// ── Rate Limiting ──────────────────────────────────────────────────────────
 
 $rateLimiter = new RateLimiter(
     __DIR__ . '/../../data/rate_limits',
@@ -99,314 +53,168 @@ $rateLimiter = new RateLimiter(
     windowSeconds: 60
 );
 
-$clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$clientIp = proxbet_get_client_ip();
 if (!$rateLimiter->check('admin_api:' . $clientIp)) {
-    http_response_code(429);
     header('Retry-After: 60');
-    jsonError('Too many requests. Please try again later.', 429);
+    proxbet_json_error('Too many requests. Please try again later.', 429);
 }
-
-// ── Authentication ─────────────────────────────────────────────────────────
 
 try {
-    proxbet_require_env(['ADMIN_PASSWORD', 'DB_HOST', 'DB_USER', 'DB_NAME']);
-    $adminPassword = (string) getenv('ADMIN_PASSWORD');
+    proxbet_require_env(['DB_HOST', 'DB_USER', 'DB_NAME']);
 } catch (Throwable $e) {
-    jsonError('Server misconfiguration: ' . $e->getMessage(), 500);
+    proxbet_json_error('Server misconfiguration: ' . $e->getMessage(), 500);
 }
-
-// Extract token from Authorization header ONLY (no query string for security)
-$token = '';
-
-$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-
-// Handle Apache/XAMPP stripping Authorization header
-if ($authHeader === '' && function_exists('apache_request_headers')) {
-    $headers = apache_request_headers();
-    $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-}
-
-if (str_starts_with($authHeader, 'Bearer ')) {
-    $token = substr($authHeader, 7);
-}
-
-// ── Database Connection ────────────────────────────────────────────────────
 
 try {
     $pdo = Db::connectFromEnv();
     $auditLogger = new AuditLogger($pdo);
-} catch (\Throwable $e) {
-    $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
-    jsonError('Database connection failed: ' . $sanitizedError, 503);
+} catch (Throwable $e) {
+    proxbet_json_error(
+        'Database connection failed: ' . RequestValidator::sanitizeErrorMessage($e->getMessage()),
+        503
+    );
 }
 
-// Security: No longer accept token from query string
-// This prevents token leakage in server logs and browser history
-if ($token === '') {
-    jsonError('Missing Authorization header. Use: Authorization: Bearer <token>', 401);
+try {
+    $authenticator = new AdminAuthenticator($auditLogger, $clientIp);
+    $authenticator->authenticate(proxbet_extract_bearer_token());
+} catch (Throwable $e) {
+    proxbet_json_error(RequestValidator::sanitizeErrorMessage($e->getMessage()), 401);
 }
 
-if (!hash_equals($adminPassword, $token)) {
-    $auditLogger->logAuthAttempt(false, null, $clientIp, 'Invalid token');
-    jsonError('Unauthorized.', 401);
-}
-
-// Log successful authentication
-$auditLogger->logAuthAttempt(true, 'admin', $clientIp);
-
-// ── Router ─────────────────────────────────────────────────────────────────
-
-$action = trim($_GET['action'] ?? '');
-$method = $_SERVER['REQUEST_METHOD'];
+$banHandler = new BanHandler($pdo, $auditLogger, $clientIp);
+$statsHandler = new StatsHandler($pdo);
+$action = trim((string) ($_GET['action'] ?? ''));
+$method = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
 match (true) {
-    $action === 'list_bans' && $method === 'GET' => handleListBans($pdo),
-    $action === 'add_ban'   && $method === 'POST' => handleAddBan($pdo),
-    $action === 'update_ban' && $method === 'POST' => handleUpdateBan($pdo),
-    $action === 'delete_ban' && $method === 'POST' => handleDeleteBan($pdo),
-    $action === 'list_matches_stats' && $method === 'GET' => handleListMatchesStats($pdo),
-    $action === 'get_match_stats' && $method === 'GET' => handleGetMatchStats($pdo),
-    $action === 'refresh_match_stats' && $method === 'POST' => handleRefreshMatchStats(),
-    $action === 'refresh_stats_batch' && $method === 'POST' => handleRefreshStatsBatch(),
-    $action === 'stats_overview' && $method === 'GET' => handleStatsOverview($pdo),
-    default => jsonError('Unknown action or method.', 404),
+    $action === 'list_bans' && $method === 'GET' => admin_handle_list_bans($banHandler),
+    $action === 'add_ban' && $method === 'POST' => admin_handle_add_ban($banHandler),
+    $action === 'update_ban' && $method === 'POST' => admin_handle_update_ban($banHandler),
+    $action === 'delete_ban' && $method === 'POST' => admin_handle_delete_ban($banHandler),
+    $action === 'list_matches_stats' && $method === 'GET' => admin_handle_list_matches_stats($statsHandler),
+    $action === 'get_match_stats' && $method === 'GET' => admin_handle_get_match_stats($statsHandler),
+    $action === 'refresh_match_stats' && $method === 'POST' => admin_handle_refresh_match_stats($statsHandler),
+    $action === 'refresh_stats_batch' && $method === 'POST' => admin_handle_refresh_stats_batch($statsHandler),
+    $action === 'stats_overview' && $method === 'GET' => admin_handle_stats_overview($statsHandler),
+    default => proxbet_json_error('Unknown action or method.', 404),
 };
 
-// ── Handlers ───────────────────────────────────────────────────────────────
-
-function handleListBans(PDO $pdo): never
+function admin_handle_list_bans(BanHandler $handler): never
 {
-    $limit  = max(1, min(50, (int) ($_GET['limit']  ?? 20)));
+    $limit = max(1, min(50, (int) ($_GET['limit'] ?? 20)));
     $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
-    $result = Db::listBans($pdo, $limit, $offset);
-    jsonOk($result);
+    proxbet_json_ok($handler->list($limit, $offset));
 }
 
-function handleAddBan(PDO $pdo): never
+function admin_handle_add_ban(BanHandler $handler): never
 {
-    global $auditLogger, $clientIp;
-    
-    $body = getBody();
-
-    $data = [
-        'country' => sanitizeString($body['country'] ?? null),
-        'liga'    => sanitizeString($body['liga']    ?? null),
-        'home'    => sanitizeString($body['home']    ?? null),
-        'away'    => sanitizeString($body['away']    ?? null),
-        'is_active' => isset($body['is_active']) ? (bool) $body['is_active'] : 1,
-    ];
-
-    // At least one field must be set
-    if (array_filter([$data['country'], $data['liga'], $data['home'], $data['away']]) === []) {
-        jsonError('At least one field (country, liga, home, away) is required.');
-    }
-
     try {
-        $id = Db::addBan($pdo, $data);
-        $ban = Db::getBanById($pdo, $id);
-        
-        // Audit log
-        $auditLogger->logAdminAction('add_ban', 'admin', 'ban', $id, $data, $clientIp);
-        
-        jsonOk($ban);
-    } catch (\Throwable $e) {
-        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
-        jsonError('Failed to add ban: ' . $sanitizedError, 500);
+        proxbet_json_ok($handler->add(proxbet_read_json_body()));
+    } catch (Throwable $e) {
+        admin_fail_write_operation('Failed to add ban', $e);
     }
 }
 
-function handleUpdateBan(PDO $pdo): never
+function admin_handle_update_ban(BanHandler $handler): never
 {
-    global $auditLogger, $clientIp;
-    
-    $body = getBody();
-    $id   = (int) ($body['id'] ?? 0);
-
+    $body = proxbet_read_json_body();
+    $id = (int) ($body['id'] ?? 0);
     if ($id <= 0) {
-        jsonError('Invalid or missing "id".');
+        proxbet_json_error('Invalid or missing "id".');
     }
-
-    $existing = Db::getBanById($pdo, $id);
-    if ($existing === null) {
-        jsonError('Ban not found.', 404);
-    }
-
-    $data = [
-        'country' => sanitizeString($body['country'] ?? null),
-        'liga'    => sanitizeString($body['liga']    ?? null),
-        'home'    => sanitizeString($body['home']    ?? null),
-        'away'    => sanitizeString($body['away']    ?? null),
-    ];
-
-    // Handle is_active toggle separately
-    $isActive = isset($body['is_active']) ? (bool) $body['is_active'] : null;
 
     try {
-        Db::updateBan($pdo, $id, $data);
-
-        if ($isActive !== null) {
-            $stmt = $pdo->prepare('UPDATE `bans` SET `is_active`=? WHERE `id`=?');
-            $stmt->execute([(int) $isActive, $id]);
-        }
-
-        $updated = Db::getBanById($pdo, $id);
-        
-        // Audit log
-        $auditLogger->logAdminAction('update_ban', 'admin', 'ban', $id, $data, $clientIp);
-        
-        jsonOk($updated);
-    } catch (\Throwable $e) {
-        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
-        jsonError('Failed to update ban: ' . $sanitizedError, 500);
+        proxbet_json_ok($handler->update($id, $body));
+    } catch (Throwable $e) {
+        admin_fail_write_operation('Failed to update ban', $e);
     }
 }
 
-function handleDeleteBan(PDO $pdo): never
+function admin_handle_delete_ban(BanHandler $handler): never
 {
-    global $auditLogger, $clientIp;
-    
-    $body = getBody();
-    $id   = (int) ($body['id'] ?? 0);
-
+    $body = proxbet_read_json_body();
+    $id = (int) ($body['id'] ?? 0);
     if ($id <= 0) {
-        jsonError('Invalid or missing "id".');
-    }
-
-    $existing = Db::getBanById($pdo, $id);
-    if ($existing === null) {
-        jsonError('Ban not found.', 404);
+        proxbet_json_error('Invalid or missing "id".');
     }
 
     try {
-        Db::deleteBan($pdo, $id);
-        
-        // Audit log
-        $auditLogger->logAdminAction('delete_ban', 'admin', 'ban', $id, null, $clientIp);
-        
-        jsonOk(['deleted_id' => $id]);
-    } catch (\Throwable $e) {
-        $sanitizedError = RequestValidator::sanitizeErrorMessage($e->getMessage());
-        jsonError('Failed to delete ban: ' . $sanitizedError, 500);
+        proxbet_json_ok($handler->delete($id));
+    } catch (Throwable $e) {
+        admin_fail_write_operation('Failed to delete ban', $e);
     }
 }
 
-function handleListMatchesStats(PDO $pdo): never
+function admin_handle_list_matches_stats(StatsHandler $handler): never
 {
     $limit = max(1, min(100, (int) ($_GET['limit'] ?? 20)));
     $offset = max(0, (int) ($_GET['offset'] ?? 0));
     $status = trim((string) ($_GET['status'] ?? 'all'));
-    $query = sanitizeLike($_GET['q'] ?? null);
+    $query = admin_sanitize_like($_GET['q'] ?? null);
 
-    $where = [];
-    $params = [];
-
-    if ($query !== null) {
-        $where[] = '(`home` LIKE :q ESCAPE \'\\\' OR `away` LIKE :q ESCAPE \'\\\' OR `liga` LIKE :q ESCAPE \'\\\')';
-        $params[':q'] = '%' . $query . '%';
-    }
-
-    if ($status === 'ok') {
-        $where[] = '`stats_fetch_status` = \'ok\'';
-    } elseif ($status === 'error') {
-        $where[] = '`stats_fetch_status` = \'error\'';
-    } elseif ($status === 'pending') {
-        $where[] = '(`sgi` IS NOT NULL AND `sgi` <> \'\' AND (`stats_fetch_status` IS NULL OR `stats_fetch_status` NOT IN (\'ok\', \'error\') OR `stats_refresh_needed` = 1))';
-    } elseif ($status === 'no_sgi') {
-        $where[] = '(`sgi` IS NULL OR `sgi` = \'\')';
-    }
-
-    $whereSql = $where === [] ? '' : ('WHERE ' . implode(' AND ', $where));
-
-    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM `matches` ' . $whereSql);
-    foreach ($params as $key => $value) {
-        $countStmt->bindValue($key, $value, PDO::PARAM_STR);
-    }
-    $countStmt->execute();
-    $total = (int) $countStmt->fetchColumn();
-
-    $sql = 'SELECT `id`,`evid`,`sgi`,`country`,`liga`,`home`,`away`,`start_time`,`stats_updated_at`,`stats_fetch_status`,`stats_error`,`stats_source`,`stats_version`,`stats_refresh_needed`,'
-        . '`ht_match_goals_1`,`ht_match_goals_2`,`h2h_ht_match_goals_1`,`h2h_ht_match_goals_2` '
-        . 'FROM `matches` '
-        . $whereSql
-        . ' ORDER BY `id` DESC LIMIT :limit OFFSET :offset';
-    $stmt = $pdo->prepare($sql);
-    foreach ($params as $key => $value) {
-        $stmt->bindValue($key, $value, PDO::PARAM_STR);
-    }
-    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-    $stmt->execute();
-
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    jsonOk([
-        'rows' => is_array($rows) ? $rows : [],
-        'total' => $total,
-    ]);
+    proxbet_json_ok($handler->listMatches($limit, $offset, $status, $query));
 }
 
-function handleGetMatchStats(PDO $pdo): never
+function admin_handle_get_match_stats(StatsHandler $handler): never
 {
     $matchId = (int) ($_GET['match_id'] ?? 0);
     if ($matchId <= 0) {
-        jsonError('Invalid or missing "match_id".');
-    }
-
-    $stmt = $pdo->prepare(
-        'SELECT * FROM `matches` WHERE `id` = ?'
-    );
-    $stmt->execute([$matchId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!is_array($row)) {
-        jsonError('Match not found.', 404);
-    }
-
-    jsonOk($row);
-}
-
-function handleRefreshMatchStats(): never
-{
-    $body = getBody();
-    $matchId = (int) ($body['match_id'] ?? 0);
-    if ($matchId <= 0) {
-        jsonError('Invalid or missing "match_id".');
+        proxbet_json_error('Invalid or missing "match_id".');
     }
 
     try {
-        $service = StatisticServiceFactory::create();
-        $result = $service->updateStatistics(1, 0, true, $matchId);
-        jsonOk($result + ['match_id' => $matchId]);
-    } catch (\Throwable $e) {
-        jsonError('Failed to refresh match stats: ' . $e->getMessage(), 500);
+        proxbet_json_ok($handler->getMatch($matchId));
+    } catch (Throwable $e) {
+        proxbet_json_error(RequestValidator::sanitizeErrorMessage($e->getMessage()), 404);
     }
 }
 
-function handleRefreshStatsBatch(): never
+function admin_handle_refresh_match_stats(StatsHandler $handler): never
 {
-    $body = getBody();
+    $body = proxbet_read_json_body();
+    $matchId = (int) ($body['match_id'] ?? 0);
+    if ($matchId <= 0) {
+        proxbet_json_error('Invalid or missing "match_id".');
+    }
+
+    try {
+        proxbet_json_ok($handler->refreshMatch($matchId));
+    } catch (Throwable $e) {
+        proxbet_json_error(
+            'Failed to refresh match stats: ' . RequestValidator::sanitizeErrorMessage($e->getMessage()),
+            500
+        );
+    }
+}
+
+function admin_handle_refresh_stats_batch(StatsHandler $handler): never
+{
+    $body = proxbet_read_json_body();
     $limit = max(1, min(1000, (int) ($body['limit'] ?? 100)));
     $offset = max(0, (int) ($body['offset'] ?? 0));
     $force = isset($body['force']) ? (bool) $body['force'] : false;
 
     try {
-        $service = StatisticServiceFactory::create();
-        $result = $service->updateStatistics($limit, $offset, $force);
-        jsonOk($result + ['limit' => $limit, 'offset' => $offset, 'force' => $force]);
-    } catch (\Throwable $e) {
-        jsonError('Failed to refresh statistics batch: ' . $e->getMessage(), 500);
+        proxbet_json_ok($handler->refreshBatch($limit, $offset, $force));
+    } catch (Throwable $e) {
+        proxbet_json_error(
+            'Failed to refresh statistics batch: ' . RequestValidator::sanitizeErrorMessage($e->getMessage()),
+            500
+        );
     }
 }
 
-function handleStatsOverview(PDO $pdo): never
+function admin_handle_stats_overview(StatsHandler $handler): never
 {
-    $sql = 'SELECT '
-        . 'COUNT(*) AS total_matches, '
-        . 'SUM(CASE WHEN `sgi` IS NOT NULL AND `sgi` <> \'\' THEN 1 ELSE 0 END) AS with_sgi, '
-        . 'SUM(CASE WHEN `stats_fetch_status` = \'ok\' THEN 1 ELSE 0 END) AS stats_ok, '
-        . 'SUM(CASE WHEN `stats_fetch_status` = \'error\' THEN 1 ELSE 0 END) AS stats_error, '
-        . 'SUM(CASE WHEN `stats_refresh_needed` = 1 THEN 1 ELSE 0 END) AS pending_refresh, '
-        . 'SUM(CASE WHEN `sgi` IS NULL OR `sgi` = \'\' THEN 1 ELSE 0 END) AS without_sgi '
-        . 'FROM `matches`';
-    $row = $pdo->query($sql)->fetch(PDO::FETCH_ASSOC);
-    jsonOk(is_array($row) ? $row : []);
+    proxbet_json_ok($handler->getOverview());
+}
+
+function admin_fail_write_operation(string $prefix, Throwable $e): never
+{
+    $message = RequestValidator::sanitizeErrorMessage($e->getMessage());
+    $status = str_contains(strtolower($message), 'not found') ? 404 : 500;
+
+    proxbet_json_error($prefix . ': ' . $message, $status);
 }

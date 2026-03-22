@@ -61,6 +61,19 @@ CLEANUP_PHP = ROOT / "backend" / "cleanup.php"
 TELEGRAM_BOT_PHP = ROOT / "backend" / "telegram_bot.php"
 
 
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+
+    return max(minimum, min(maximum, value))
+
+
 def ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -280,6 +293,10 @@ class RuntimeOptions:
     run_parserstat: bool
     run_bot: bool
     run_cleanup: bool
+    minute_pipeline_interval_sec: int
+    minute_pipeline_initial_delay_sec: int
+    parserstat_interval_sec: int
+    parserstat_initial_delay_sec: int
 
 
 def job_live() -> None:
@@ -299,6 +316,7 @@ def job_cleanup() -> None:
 
 
 def job_minute_pipeline(run_live: bool, run_scanner: bool, run_bet_checker: bool, run_cleanup: bool) -> None:
+    started_at = time.time()
     if run_live:
         job_live()
     if run_scanner:
@@ -307,11 +325,16 @@ def job_minute_pipeline(run_live: bool, run_scanner: bool, run_bet_checker: bool
         job_bet_checker()
     if run_cleanup:
         job_cleanup()
+    elapsed = round(time.time() - started_at, 2)
+    print(f"[{ts()}] [INFO] minute-pipeline: finished in {elapsed}s", flush=True)
 
 
 def job_parser_then_stat() -> None:
+    started_at = time.time()
     code = run_php(PARSER_PHP, "parser")
     run_php(STAT_PHP, f"stat(after parser exit {code})")
+    elapsed = round(time.time() - started_at, 2)
+    print(f"[{ts()}] [INFO] parser+stat: finished in {elapsed}s", flush=True)
 
 
 class BackStartApp:
@@ -367,7 +390,8 @@ class BackStartApp:
             self.jobs.append(
                 Job(
                     name="minute-pipeline-every-1m",
-                    interval_sec=60,
+                    interval_sec=self.options.minute_pipeline_interval_sec,
+                    initial_delay_sec=self.options.minute_pipeline_initial_delay_sec,
                     target=lambda: job_minute_pipeline(
                         run_live=self.options.run_live,
                         run_scanner=self.options.run_scanner,
@@ -377,7 +401,14 @@ class BackStartApp:
                 )
             )
         if self.options.run_parserstat:
-            self.jobs.append(Job(name="parser+stat-every-5m", interval_sec=300, target=job_parser_then_stat))
+            self.jobs.append(
+                Job(
+                    name="parser+stat-every-5m",
+                    interval_sec=self.options.parserstat_interval_sec,
+                    initial_delay_sec=self.options.parserstat_initial_delay_sec,
+                    target=job_parser_then_stat,
+                )
+            )
 
     def start_processes(self) -> None:
         for long_process in self.long_procs:
@@ -442,6 +473,10 @@ def main() -> int:
         run_parserstat=not args.no_parserstat,
         run_bot=not args.no_bot,
         run_cleanup=not args.no_cleanup,
+        minute_pipeline_interval_sec=env_int("BACK_START_MINUTE_PIPELINE_INTERVAL_SEC", 60, 15, 3600),
+        minute_pipeline_initial_delay_sec=env_int("BACK_START_MINUTE_PIPELINE_INITIAL_DELAY_SEC", 0, 0, 3600),
+        parserstat_interval_sec=env_int("BACK_START_PARSERSTAT_INTERVAL_SEC", 300, 60, 3600),
+        parserstat_initial_delay_sec=env_int("BACK_START_PARSERSTAT_INITIAL_DELAY_SEC", 30, 0, 3600),
     )
 
     return BackStartApp(options).run()

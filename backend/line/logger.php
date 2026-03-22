@@ -41,6 +41,12 @@ final class Logger
     }
 
     /** @param array<string,mixed> $context */
+    public static function debug(string $message, array $context = []): void
+    {
+        self::log('DEBUG', $message, $context);
+    }
+
+    /** @param array<string,mixed> $context */
     private static function log(string $level, string $message, array $context): void
     {
         self::init();

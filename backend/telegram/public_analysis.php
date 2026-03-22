@@ -178,6 +178,20 @@ function enrichAnalysisContextWithScanner(array $context): array
         return $context;
     }
 
+    if ($algorithmId === 4) {
+        $algorithmXData = buildAlgorithmXContextData($context);
+        $context['scanner_form_score'] = null;
+        $context['scanner_h2h_score'] = null;
+        $context['scanner_live_score'] = null;
+        $context['scanner_probability'] = normalizeProbabilityPercent((float) ($algorithmXData['probability'] ?? 0.0));
+        $context['scanner_bet'] = !empty($algorithmXData['bet']) ? 'yes' : 'no';
+        $context['scanner_reason'] = (string) ($algorithmXData['reason'] ?? '');
+        $context['scanner_signal_type'] = 'first_half_goal';
+        $context['scanner_algorithm_basis'] = 'algorithmx_live_pressure';
+        $context['scanner_algorithm_data'] = $algorithmXData;
+        return $context;
+    }
+
     $algorithmOneContext = buildAlgorithmOneContextData($context, $formData, $h2hData, $liveData, $calculator, $filter);
     $context['scanner_form_score'] = $algorithmOneContext['scanner_form_score'];
     $context['scanner_h2h_score'] = $algorithmOneContext['scanner_h2h_score'];
@@ -444,6 +458,61 @@ function buildAlgorithmThreeContextData(array $context): array
             && $tableGames2 !== null
             && $tableGoals2 !== null
             && $tableMissed2 !== null,
+    ];
+}
+
+function buildAlgorithmXContextData(array $context): array
+{
+    $payload = decodeAlgorithmPayload($context['algorithm_payload_json'] ?? null);
+    $debug = is_array($payload['debug'] ?? null) ? $payload['debug'] : [];
+
+    $minute = is_numeric($payload['minute'] ?? null)
+        ? (int) $payload['minute']
+        : extractMinuteFromTime((string) ($context['time'] ?? ''));
+
+    $probability = is_numeric($payload['probability'] ?? null)
+        ? (float) $payload['probability']
+        : 0.0;
+
+    $reason = trim((string) ($debug['decision_reason'] ?? ($payload['reason'] ?? '')));
+    $bet = $reason !== '' && str_contains(mb_strtolower($reason), 'recommended bet');
+    if (isset($context['bet_message_id']) && $context['bet_message_id'] !== null) {
+        $bet = true;
+    }
+
+    return [
+        'minute' => $minute,
+        'score_home' => normalizeInt($context['live_ht_hscore'] ?? null),
+        'score_away' => normalizeInt($context['live_ht_ascore'] ?? null),
+        'dangerous_attacks_home' => is_numeric($payload['dangerous_attacks_home'] ?? null)
+            ? (int) $payload['dangerous_attacks_home']
+            : normalizeInt($context['live_danger_att_home'] ?? null),
+        'dangerous_attacks_away' => is_numeric($payload['dangerous_attacks_away'] ?? null)
+            ? (int) $payload['dangerous_attacks_away']
+            : normalizeInt($context['live_danger_att_away'] ?? null),
+        'shots_home' => is_numeric($payload['shots_home'] ?? null)
+            ? (int) $payload['shots_home']
+            : normalizeInt($context['live_shots_on_target_home'] ?? null) + normalizeInt($context['live_shots_off_target_home'] ?? null),
+        'shots_away' => is_numeric($payload['shots_away'] ?? null)
+            ? (int) $payload['shots_away']
+            : normalizeInt($context['live_shots_on_target_away'] ?? null) + normalizeInt($context['live_shots_off_target_away'] ?? null),
+        'shots_on_target_home' => is_numeric($payload['shots_on_target_home'] ?? null)
+            ? (int) $payload['shots_on_target_home']
+            : normalizeInt($context['live_shots_on_target_home'] ?? null),
+        'shots_on_target_away' => is_numeric($payload['shots_on_target_away'] ?? null)
+            ? (int) $payload['shots_on_target_away']
+            : normalizeInt($context['live_shots_on_target_away'] ?? null),
+        'corners_home' => is_numeric($payload['corners_home'] ?? null)
+            ? (int) $payload['corners_home']
+            : normalizeInt($context['live_corner_home'] ?? null),
+        'corners_away' => is_numeric($payload['corners_away'] ?? null)
+            ? (int) $payload['corners_away']
+            : normalizeInt($context['live_corner_away'] ?? null),
+        'probability' => $probability,
+        'interpretation' => (string) ($payload['interpretation'] ?? ''),
+        'reason' => $reason,
+        'bet' => $bet,
+        'debug' => $debug,
     ];
 }
 

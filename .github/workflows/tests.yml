@@ -145,11 +145,11 @@ jobs:
       - name: Run PHPStan
         run: |
           if [ -f "vendor/bin/phpstan" ]; then
-            vendor/bin/phpstan analyse backend --level=5 || true
+            vendor/bin/phpstan analyse backend --level=5
           fi
       
       - name: Run PHP CS Fixer (dry-run)
         run: |
           if [ -f "vendor/bin/php-cs-fixer" ]; then
-            vendor/bin/php-cs-fixer fix --dry-run --diff || true
+            vendor/bin/php-cs-fixer fix --dry-run --diff
           fi

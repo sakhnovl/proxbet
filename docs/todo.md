@@ -1,1099 +1,807 @@
-# Техническое задание: Внедрение AlgorithmX (Goal Probability Algorithm)
+# Техническое задание и TODO по аудиту, рефакторингу и подготовке Proxbet к деплою
 
-## Обзор
+## 1. Цель документа
 
-Необходимо внедрить новый алгоритм предсказания вероятности гола в оставшееся время первого тайма на основе живой статистики матча. Алгоритм должен быть реализован как `AlgorithmX` в структуре `backend/scanner/Algorithms/AlgorithmX/`.
+Подготовить проект `Proxbet` к безопасному, предсказуемому и поддерживаемому production-деплою.
 
-**Источник спецификации:** `docs/goal_probability_agent_prompt.md`
+Итог работ должен закрыть 4 направления:
 
-**Референсная архитектура:** `backend/scanner/Algorithms/AlgorithmOne.php`
+1. Безопасность: убрать критические и высокие риски, выровнять аутентификацию, секреты, CORS, health endpoints, логи и доступ к инфраструктуре.
+2. Рефакторинг: упростить структуру проекта, убрать дублирование и рассинхронизацию между legacy-скриптами, сервисами и документацией.
+3. Производительность: уменьшить нагрузку на БД и runtime, стабилизировать batch-обработку, кэширование, cron/pipeline и мониторинг.
+4. Деплойная готовность: сделать единый и воспроизводимый путь запуска, проверки, миграций, smoke-тестов и rollback.
 
----
+## 2. Что было проанализировано
 
-## Важные замечания и рекомендации
+Проверены:
 
-### Архитектурные принципы
+- структура репозитория;
+- `composer.json`, `docker-compose.yml`, `backend/Dockerfile`, `README.md`, `.env.example`;
+- основные entrypoint-файлы backend;
+- security-слой в `backend/security/*`;
+- модули `line`, `live`, `scanner`, `statistic`, `telegram`, `admin`, `api`;
+- smoke/tests/phpstan;
+- инфраструктурные конфиги в `config/*`;
+- скрипты миграций, бэкапов и security-проверок.
 
-1. **Следовать паттернам AlgorithmOne**: Используйте AlgorithmOne как референс для структуры кода, dependency injection, и организации тестов.
+Бысткая сводка по проекту:
 
-2. **Разделение ответственности (SRP)**: Каждый класс должен иметь одну чёткую ответственность:
-   - `AlgorithmX` - оркестрация
-   - `Calculators` - математические расчёты
-   - `Filters` - бизнес-логика решений
-   - `DataExtractor` - извлечение данных
-   - `DataValidator` - валидация
+- Язык: PHP 8.2/8.3 + Python для orchestration/scheduler.
+- Архитектура: набор CLI/API entrypoint-скриптов без единой фронт-контроллерной схемы.
+- Домен: ingestion матчей, live-обновления, статистика, сигналы, Telegram automation, admin/public API.
+- Объём кода: примерно `263` PHP-файла.
+- Тестовые файлы: примерно `57` `*Test.php`.
 
-3. **Dependency Injection**: Все зависимости передаются через конструктор, не создаются внутри классов.
+## 3. Текущее состояние проекта
 
-4. **Immutability**: Используйте `final` классы и `private readonly` свойства где возможно.
+### 3.1 Сильные стороны
 
-5. **Type Safety**: Строгая типизация (`declare(strict_types=1);`), PHPDoc для массивов.
+- Есть разделение по доменам: `line`, `live`, `scanner`, `statistic`, `telegram`, `security`, `admin`, `api`.
+- Есть PHPUnit-тесты по нескольким подсистемам.
+- Уже присутствуют заготовки для security-слоя:
+  - rate limiting;
+  - CSRF;
+  - JWT/auth helpers;
+  - security headers;
+  - API key auth;
+  - audit logging;
+  - encryption/secrets rotation.
+- Есть Docker-сборка и docker-compose окружение.
+- Есть мониторинг и observability-контур: Prometheus, Grafana, Loki, Alertmanager.
 
-### Тестирование
+### 3.2 Основные проблемы
 
-1. **Unit-тесты**: Каждый калькулятор должен иметь 100% покрытие тестами.
+- Проект сочетает legacy procedural entrypoints и новую service/repository-архитектуру, из-за чего правила работы расходятся.
+- Документация и пример конфигурации частично не соответствуют реальному коду.
+- Не все security-компоненты реально встроены в entrypoints.
+- Статический анализ показывает большой технический долг.
+- Smoke и часть тестов уже сигнализируют о расхождении ожиданий и реализации.
+- В проекте много operational scripts, но нет одного жёстко определённого production runbook.
 
-2. **Интеграционные тесты**: Проверить полный flow от входных данных до решения.
+## 4. Фактические результаты проверок
 
-3. **Тестовые данные**: Использовать реальные сценарии из спецификации:
-   - Низкая активность (AIS_rate < 1.0)
-   - Средняя активность (AIS_rate 1.0-2.0)
-   - Высокая активность (AIS_rate > 2.0)
-   - Сухой период (0:0 после 30 минуты)
-   - Различные счета (ничья, разница 1, разница 2+)
+### 4.1 PHPUnit
 
-4. **Edge cases**:
-   - minute = 0 (деление на ноль)
-   - minute = 45 (граница первого тайма)
-   - Все статистики = 0
-   - Очень высокие значения статистик
+Успешно:
 
-### Производительность
+- `composer test:line` -> OK, `30 tests`, `84 assertions`
+- `composer test:statistic` -> OK, `20 tests`, `83 assertions`
 
-1. **Кэширование**: Если алгоритм вызывается часто для одного матча, рассмотреть кэширование результатов на 30-60 секунд.
+Проблемы:
 
-2. **Оптимизация запросов**: DataExtractor должен извлекать только необходимые поля из БД.
+- `composer test:scanner` -> FAIL, `3` падения в `AlgorithmX`
+  - ожидается ошибка по `status`, фактически приходит `minute 90 exceeds maximum 45`
+- `composer test:telegram` -> тесты зелёные, но команда завершается с warning
+  - `No code coverage driver available`
 
-3. **Lazy loading**: Не загружать данные, которые не используются в текущем режиме.
+### 4.2 Smoke
 
-### Калибровка параметров
+- `composer test:smoke` -> FAIL
+- проблема в кейсе `bet_checker`
+- ожидаемый текст smoke-теста не совпадает с фактическим текстом ошибки
+- это симптом рассинхронизации между runtime и тестовой спецификацией
 
-1. **Начальные значения**: k=2.5, threshold=1.8 - это эвристические значения, требующие калибровки.
+### 4.3 PHPStan
 
-2. **Метрики качества**:
-   - **Brier Score**: Мера точности вероятностных прогнозов (чем ниже, тем лучше). Целевое значение < 0.20.
-   - **ROC-AUC**: Способность модели различать классы. Целевое значение > 0.68.
-   - **Calibration plot**: График соответствия предсказанных вероятностей реальным частотам.
+- `vendor\bin\phpstan analyse --no-progress` -> FAIL
+- найдено `290` ошибок статического анализа
 
-3. **Процесс калибровки**:
-   ```
-   1. Собрать исторические данные (минимум 500 матчей)
-   2. Для каждого матча записать:
-      - Входные данные (minute, stats)
-      - Предсказанная вероятность
-      - Фактический результат (был ли гол)
-   3. Оптимизировать параметры методом grid search или Bayesian optimization
-   4. Валидировать на отдельной тестовой выборке
-   ```
+Типовые проблемы:
 
-4. **Веса AIS**: Текущие веса (0.4, 0.3, 0.2, 0.1) могут быть оптимизированы через регрессионный анализ.
+- отсутствующие классы исключений;
+- вызовы несуществующих методов;
+- недоописанные типы;
+- unreachable branches;
+- рассинхрон интерфейсов и реализаций;
+- ошибки вокруг security/core abstractions.
 
-### Мониторинг и логирование
+Это означает, что кодовая база ещё не находится в состоянии, пригодном для безопасного масштабирования и предсказуемого деплоя.
 
-1. **Логировать все решения**: Для каждого матча сохранять:
-   - Входные данные
-   - Промежуточные расчёты (AIS, base_prob, modifiers)
-   - Финальную вероятность
-   - Решение о ставке
-   - Причину решения
+## 5. Критические и высокие риски
 
-2. **Метрики для мониторинга**:
-   - Количество проанализированных матчей
-   - Распределение вероятностей
-   - Процент положительных решений (bet=true)
-   - Средняя вероятность для bet=true vs bet=false
+### 5.1 Критические
+
+1. Конфигурация окружения рассинхронизирована.
+   - `.env.example` использует `DB_PASSWORD`, `ADMIN_API_PASSWORD`
+   - runtime использует `DB_PASS`, `ADMIN_PASSWORD`
+   - часть bash-скриптов тоже ждёт `DB_PASSWORD`
+   - результат: высокий риск ложной “готовности” окружения и падений после деплоя
+
+2. Admin auth реализован через прямое сравнение bearer token с `ADMIN_PASSWORD`.
+   - это лучше, чем query param, но всё ещё слабее нормальной схемы с отдельным admin identity, rotation и ограничением scope
+   - в `README.md` до сих пор описаны query-параметры токена
+
+3. Health endpoints раскрывают внутреннее состояние без гарантированной защиты.
+   - есть `HealthEndpointAuth`, но `backend/healthz.php` и `backend/healthz_enhanced.php` не используют его явно
+   - это создаёт риск утечки operational information наружу
+
+4. В кодовой базе есть незавершённые и частично интегрированные security abstraction layers.
+   - пример: `ApiKeyAuth`, `CsrfProtection`, `HealthEndpointAuth`, `SecretsRotation`
+   - часть из них не встроена системно в публичные/admin entrypoints
+
+### 5.2 Высокие
+
+1. Статический анализ показывает сломанные контракты в `core/security`.
+2. Security/infra логика распределена между procedural файлами и сервисами.
+3. Нет единой матрицы доступа для public API, admin API, Telegram webhook/bot и health endpoints.
+4. Docker compose включает слишком много сервисов сразу для базового деплоя.
+5. Redis-кэш не является обязательной зависимостью, но код регулярно пишет ошибки вида `Class "Redis" not found`.
+6. В README и smoke/tests зафиксированы уже устаревшие сценарии использования.
+7. CI настроен недостаточно жёстко: в workflow есть шаги качества с `|| true`, поэтому pipeline может быть зелёным даже при реальных дефектах.
+8. `backend/metrics.php` публикует Prometheus-метрики без явной защиты, rate limit и access policy.
+9. `backend/alert_webhook.php` принимает Alertmanager payload без явной подписи, секретного токена или allowlist-ограничения источника.
+
+### 5.3 Средние
+
+1. Часть SQL строится динамически, пусть и в контролируемых местах.
+2. Есть procedural duplicate entrypoints рядом с новыми handlers/services.
+3. Scheduler в `back_start.py` выполняет длинную последовательную pipeline-цепочку, что может приводить к накоплению задержек.
+4. Не видно единого миграционного механизма уровня production release.
+5. Эксплуатационный контур раздвоен: проект одновременно предполагает запуск через Docker worker, `back_start.py`, `systemd` и `supervisor`, но единый canonical runtime не зафиксирован.
+
+## 6. Целевое состояние проекта
+
+После выполнения этого ТЗ проект должен соответствовать следующим условиям:
+
+1. Любая production-конфигурация поднимается из одного понятного набора env-переменных без расхождений.
+2. Все внешние точки входа имеют явную схему auth/authz, rate limit, logging и error handling.
+3. Health endpoints безопасны и делятся на:
+   - public liveness;
+   - protected readiness/diagnostics.
+4. Public/admin API имеют единый bootstrap и единые middleware/security policies.
+5. Структура директорий отражает домены и слои, а не исторические сценарии.
+6. Статический анализ, unit/integration/smoke проходят в CI.
+7. Деплой описан как повторяемый runbook с rollback и post-deploy checks.
+
+## 7. Полное техническое задание
+
+### 7.1 Поток 1. Security hardening
+
+#### 7.1.1 Конфигурация и секреты
+
+Нужно:
+
+- унифицировать naming env-переменных;
+- выбрать один канонический набор переменных:
+  - `DB_HOST`
+  - `DB_PORT`
+  - `DB_NAME`
+  - `DB_USER`
+  - `DB_PASS`
+  - `ADMIN_PASSWORD` или, лучше, `ADMIN_API_TOKEN`
+  - `TELEGRAM_BOT_TOKEN`
+  - `ENCRYPTION_KEY`
+  - `APP_URL`
+  - `ALLOWED_ORIGINS`
+- убрать параллельное использование `DB_PASSWORD`/`DB_PASS`, `ADMIN_API_PASSWORD`/`ADMIN_PASSWORD`;
+- синхронизировать `.env.example`, `README.md`, shell scripts, smoke tests и runtime;
+- описать обязательные и опциональные env;
+- внедрить fail-fast validation при запуске контейнера/процесса.
+
+Критерии приёмки:
+
+- существует единый список env-переменных;
+- `.env.example` полностью соответствует runtime;
+- smoke-тесты валидируют актуальные сообщения и актуальные env names;
+- не осталось файлов, использующих устаревшие env names.
+
+#### 7.1.2 Аутентификация и авторизация
+
+Нужно:
+
+- формализовать отдельные модели доступа:
+  - public API;
+  - admin API;
+  - Telegram webhook/bot;
+  - health endpoints;
+  - alert/webhook endpoints;
+- убрать legacy-упоминания query-token auth из документации и всех примеров;
+- решить, какая модель будет целевой для admin API:
+  - short-lived JWT;
+  - hashed static admin token;
+  - API key c permissions;
+- для admin API внедрить:
+  - rotation;
+  - audit trail;
+  - rate limit per client/token;
+  - чёткий 401/403 contract.
+
+Критерии приёмки:
+
+- admin API не зависит от “голого” пароля как bearer secret без описанной ротации;
+- документация совпадает с реализацией;
+- доступы покрыты тестами.
+
+#### 7.1.3 Health/security boundaries
+
+Нужно:
+
+- разделить health endpoints:
+  - `/backend/healthz.php` -> минимальный public liveness;
+  - `/backend/healthz_enhanced.php` -> только под auth/IP allowlist;
+- определить политику доступа к `/backend/metrics.php`:
+  - internal-only;
+  - reverse-proxy allowlist;
+  - basic auth / bearer auth;
+- внедрить `HealthEndpointAuth` или заменить на единый middleware;
+- исключить раскрытие деталей подключения к БД, Redis, disk/memory без авторизации;
+- проверить `alert_webhook.php` и иные webhooks на подпись и ограничение источников.
+
+Критерии приёмки:
+
+- неаутентифицированный запрос видит только безопасный минимальный статус;
+- operational details видны только доверенным клиентам;
+- metrics endpoint не доступен публично без явного решения и документации;
+- есть тесты на 401/403/200 сценарии.
 
-3. **Алерты**:
-   - Если > 90% матчей имеют вероятность < 10% (возможно, проблема с данными)
-   - Если > 50% матчей имеют bet=true (возможно, слишком агрессивные пороги)
+#### 7.1.4 Input validation, CSRF, headers, CORS
 
-### Интеграция с существующей системой
+Нужно:
 
-1. **Обратная совместимость**: AlgorithmX не должен ломать работу Algorithms 1-3.
+- определить, где CSRF реально нужен, а где используется stateless token auth и CSRF избыточен;
+- убрать “мертвые” security layers или реально встроить их;
+- унифицировать применение:
+  - `SecurityHeaders`;
+  - `RequestValidator`;
+  - `RateLimiter`;
+  - `InputValidator`;
+  - CORS policy;
+- проверить whitelist origins и политику credentials;
+- формально описать разрешённые методы и headers по endpoint groups.
 
-2. **Постепенное внедрение**:
-   - Фаза 1: Реализовать и протестировать локально
-   - Фаза 2: Запустить в shadow mode (расчёт без реальных ставок)
-   - Фаза 3: A/B тестирование на небольшой выборке матчей
-   - Фаза 4: Полное внедрение
+Критерии приёмки:
 
-3. **Feature flag**: Использовать `ALGORITHMX_ENABLED` для быстрого отключения в случае проблем.
+- все HTTP entrypoints используют единый bootstrap pipeline;
+- нет security-классов, которые существуют, но не участвуют в реальном request lifecycle;
+- CORS настроен только на нужные origin'ы.
 
-4. **Версионирование**: Если потребуется изменить алгоритм, создать AlgorithmX v2 аналогично AlgorithmOne v2.
+#### 7.1.5 Логи, аудит, утечки данных
 
-### Безопасность и валидация
+Нужно:
 
-1. **Защита от некорректных данных**: DataValidator должен отклонять:
-   - Отрицательные значения статистик
-   - Минуты вне диапазона [0, 90]
-   - Отсутствующие обязательные поля
+- проверить, что в логах не пишутся токены, ключи, сырой `.env`, SQL stack traces;
+- централизовать логирование ошибок;
+- ввести redaction policy;
+- унифицировать audit logging для admin/security событий.
+
+Критерии приёмки:
+
+- чувствительные поля редактируются/маскируются;
+- security-события можно отследить отдельно;
+- лог-формат одинаковый для CLI/API.
+
+#### 7.1.6 Webhook и observability security
+
+Нужно:
+
+- защитить `backend/alert_webhook.php`:
+  - secret token в header/query только как временная мера;
+  - лучше внутренний network boundary + allowlist + отдельный shared secret;
+- проверить, не раскрывает ли `metrics.php` чувствительные operational данные;
+- определить, какие monitoring endpoints доступны только из внутренней сети;
+- зафиксировать схему безопасной интеграции `Prometheus -> Alertmanager -> app webhook -> Telegram`.
 
-2. **Защита от переполнения**: При расчёте exp() в сигмоиде проверять на overflow.
+Критерии приёмки:
 
-3. **SQL injection**: Использовать prepared statements для всех запросов к БД.
+- webhook не принимает анонимные POST из внешней сети;
+- observability endpoints не раскрывают лишние данные наружу;
+- схема доступа описана в deploy docs.
 
-### Документация
+### 7.2 Поток 2. Архитектурный рефакторинг
 
-1. **README.md в AlgorithmX/**: Должен содержать:
-   - Описание алгоритма
-   - Примеры использования
-   - Объяснение параметров
-   - Ссылки на научные источники (если есть)
+#### 7.2.1 Упорядочивание структуры проекта
 
-2. **Inline комментарии**: Объяснять сложную математику и бизнес-логику.
+Цель:
 
-3. **PHPDoc**: Полная документация всех публичных методов с типами параметров и возвращаемых значений.
+- сделать структуру понятной для нового разработчика и production support.
 
-### Дальнейшее развитие
+Нужно:
 
-После успешного внедрения базовой версии рассмотреть:
+- описать и внедрить целевую структуру слоёв:
+  - `bootstrap`
+  - `Http`
+  - `Cli`
+  - `Domain`
+  - `Infrastructure`
+  - `Security`
+  - `Support`
+- минимизировать прямую работу entrypoints с глобальными функциями и raw PDO;
+- постепенно переносить procedural логику в сервисы/handlers/repositories;
+- определить, какие файлы считаются legacy и подлежат декомпозиции.
 
-1. **Machine Learning**: Заменить эвристическую сигмоиду на обученную модель (XGBoost, LightGBM).
+Критерии приёмки:
 
-2. **Дополнительные факторы**:
-   - xG (expected goals) если доступно
-   - Possession (владение мячом)
-   - Форма команд в последних матчах
-   - Мотивация (турнирное положение)
+- у каждого entrypoint минимальный orchestration-код;
+- бизнес-логика живёт в сервисах;
+- структура описана в docs.
 
-3. **Динамическое обновление**: Пересчитывать вероятность каждую минуту и отслеживать тренды.
+#### 7.2.2 Устранение дублирования и рассинхронизации
 
-4. **Confidence intervals**: Возвращать не только точечную оценку, но и доверительный интервал.
+Нужно:
 
-5. **Multi-target prediction**: Предсказывать не только "будет ли гол", но и "сколько голов" или "кто забьёт".
+- сравнить и консолидировать логику в:
+  - `backend/admin/api.php` и `backend/admin/Handlers/*`
+  - `backend/line/Db.php`, `backend/line/MatchRepository.php`, `backend/core/Services/*`
+  - security helpers и фактические вызовы
+- убрать дублированные SQL/валидации/response helpers;
+- определить единый подход к ошибкам и JSON responses.
 
----
+Критерии приёмки:
 
-## Контрольный чек-лист перед деплоем
+- не остается двух параллельных реализаций одной и той же операции без веской причины;
+- уменьшается количество procedural helper blocks внутри entrypoints.
 
-- [x] Все unit/integration-тесты `scanner` проходят (182 теста, 570 assertions), включая `AlgorithmX` (120 тестов) ✅
-- [x] Интеграционные тесты `AlgorithmX` проходят ✅
-- [x] Код `backend/scanner/Algorithms/AlgorithmX` прошёл PHPStan анализ (level 6 в `phpstan.neon`) ✅
-- [x] Документация написана (README.md, PHPDoc) ✅
-- [x] Переменные окружения добавлены в .env.example ✅
-- [x] AlgorithmFactory обновлён ✅
-- [x] Scanner.php обновлён ✅
-- [x] ResultFormatter.php обновлён ✅
-- [x] Логирование настроено ✅
-- [x] Протестировано на тестовых данных и fixtures-сценариях ✅
-- [x] Метрики качества реализованы (QualityMetrics.php с Brier Score, ROC-AUC) ✅
-- [x] Feature flag ALGORITHMX_ENABLED работает ✅
-- [x] Код готов к продакшену ✅
-- [x] Миграции БД не требуются (`AlgorithmX` использует существующие поля) ✅
-- [x] Мониторинг и алерты настроены (summary + warning thresholds в Scanner) ✅
+#### 7.2.3 Исправление contracts/core слоя
 
-**Статус:** ✅ **ГОТОВО К ДЕПЛОЮ**
+Нужно:
 
-**Известные замечания:**
-- Калибровка параметров k и threshold рекомендуется на реальных данных
-- Скрипты калибровки готовы: `scripts/algorithmx_*.php`
-- Полный `backend/scanner` PHPStan-прогон всё ещё содержит legacy-замечания вне `AlgorithmX`
-
-**Проверено дополнительно (2026-03-22):**
-- [x] Исправлена валидация русских статусов матча (`Завершён`, `Отменён`) в `DataValidator`
-- [x] Добавлен regression-тест на русский статус завершённого матча
-
----
-
-## Полезные ссылки
-
-- **Референсная архитектура**: `backend/scanner/Algorithms/AlgorithmOne.php`
-- **Спецификация алгоритма**: `docs/goal_probability_agent_prompt.md`
-- **AlgorithmInterface**: `backend/core/Interfaces/AlgorithmInterface.php`
-- **Существующий DataExtractor**: `backend/scanner/DataExtractor.php`
-- **Тесты AlgorithmOne**: `backend/scanner/Algorithms/AlgorithmOne/tests/`
-
----
-
-## Контакты и поддержка
-
-При возникновении вопросов или проблем при реализации:
-
-1. Изучить референсную реализацию AlgorithmOne
-2. Проверить существующие тесты для понимания паттернов
-3. Использовать PHPStan для статического анализа
-4. Запустить существующие тесты для проверки совместимости
-
----
-
-**Версия документа**: 1.1  
-**Дата создания**: 2026-03-22  
-**Автор**: AI Agent Analysis  
-**Статус**: Implemented and Verified
-
-## Примеры кода (шаблоны)
-
-### Пример 1: AlgorithmX.php (скелет)
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace Proxbet\Scanner\Algorithms\AlgorithmX;
-
-use Proxbet\Core\Interfaces\AlgorithmInterface;
-
-final class AlgorithmX implements AlgorithmInterface
-{
-    public function __construct(
-        private Config $config,
-        private DataExtractor $extractor,
-        private DataValidator $validator,
-        private Calculators\ProbabilityCalculator $calculator,
-        private Filters\DecisionFilter $filter
-    ) {
-    }
-
-    public function getId(): int
-    {
-        return Config::ALGORITHM_ID;
-    }
-
-    public function getName(): string
-    {
-        return Config::ALGORITHM_NAME;
-    }
-
-    public function analyze(array $matchData): array
-    {
-        // 1. Извлечь live_data
-        $liveData = $this->extractor->extract($matchData);
-        
-        // 2. Валидировать данные
-        $validation = $this->validator->validate($liveData);
-        if (!$validation['valid']) {
-            return [
-                'bet' => false,
-                'reason' => $validation['reason'],
-                'confidence' => 0.0,
-            ];
-        }
-        
-        // 3. Рассчитать вероятность
-        $result = $this->calculator->calculate($liveData);
-        
-        // 4. Принять решение
-        $decision = $this->filter->shouldBet(
-            $result['probability'],
-            $liveData,
-            $result['debug']
-        );
-        
-        // 5. Вернуть результат
-        return [
-            'bet' => $decision['bet'],
-            'reason' => $decision['reason'],
-            'confidence' => $result['probability'],
-            'debug' => $result['debug'],
-        ];
-    }
-}
+- привести `core` и `security` к согласованным интерфейсам;
+- устранить отсутствующие классы исключений и несуществующие методы;
+- добить строгую типизацию там, где PHPStan уже показывает реальные нарушения;
+- очистить недоступный код и неверные PHPDoc.
+
+Критерии приёмки:
+
+- PHPStan перестаёт падать на сломанных символах и контрактах;
+- core слой становится базой для дальнейшего безопасного рефакторинга.
+
+### 7.3 Поток 3. Производительность и снижение нагрузки
+
+#### 7.3.1 База данных
+
+Нужно:
+
+- провести ревизию запросов к таблицам:
+  - `matches`
+  - `bans`
+  - `bet_messages`
+  - `telegram_users`
+  - `ai_analysis_requests`
+  - `gemini_api_keys`
+  - `gemini_models`
+- проверить фактическое покрытие индексами под:
+  - активные live-матчи;
+  - выборки по `stats_fetch_status`, `stats_refresh_needed`;
+  - обновления по `evid`;
+  - bet checking;
+  - AI-related access patterns;
+- запретить неограниченные тяжёлые select'ы на production paths;
+- формализовать batch sizes и limits.
+
+Критерии приёмки:
+
+- для hot queries есть таблица “query -> index -> justification”;
+- нет тяжёлых запросов без лимитов на публичных маршрутах;
+- миграции индексов вынесены в повторяемый deploy step.
+
+#### 7.3.2 Scheduler/pipeline
+
+Нужно:
+
+- проанализировать последовательность `live -> scanner -> bet_checker -> cleanup`;
+- измерить длительность каждого шага;
+- решить, что можно распараллелить, а что нужно сериализовать;
+- исключить overlap и накопление хвоста задач;
+- ввести timeout, retry policy и dead-letter/recovery policy для критичных шагов.
+
+Критерии приёмки:
+
+- pipeline не блокирует сам себя;
+- длительность шага и статус выполнения наблюдаемы;
+- при падении одного шага система не зависает бесконтрольно.
+
+#### 7.3.3 Кэш и Redis
+
+Нужно:
+
+- решить, Redis в проекте обязательный или optional;
+- если optional:
+  - убрать шумные ошибки в тестах и runtime;
+  - ввести явный graceful fallback;
+- если mandatory:
+  - добавить расширение/проверку на старте;
+  - сделать health/readiness зависимым от него там, где нужно;
+- описать cache invalidation policy.
+
+Критерии приёмки:
+
+- отсутствие Redis не приводит к засорению логов и не маскирует реальные ошибки;
+- кэш ведёт себя предсказуемо в dev/test/prod.
+
+### 7.4 Поток 4. Подготовка к production deployment
+
+#### 7.4.1 Docker и инфраструктура
+
+Нужно:
+
+- разделить профили окружений:
+  - local/dev;
+  - prod-minimal;
+  - prod-observability;
+- не тащить весь мониторинговый стек в обязательный базовый запуск;
+- проверить образ на:
+  - размер;
+  - запуск под non-root где возможно;
+  - необходимые php extensions;
+  - reproducible build;
+- описать persistent volumes и backup boundaries.
+
+Критерии приёмки:
+
+- есть минимальный production compose/profile;
+- можно поднять приложение без phpMyAdmin/Grafana/Loki, если это не нужно;
+- образ стабильно стартует с валидированным env.
+
+#### 7.4.2 CI/CD и quality gates
+
+Нужно:
+
+- внедрить pipeline проверок:
+  - `phpunit`
+  - `phpstan`
+  - smoke
+  - security regression checks
+- убрать permissive-паттерны вида `|| true` из quality-критичных шагов;
+- выровнять GitHub Actions с реальными composer-командами проекта;
+- проверить актуальность coverage-шага и его зависимостей;
+- разделить обязательные и informational проверки;
+- запретить деплой при падении критичных quality gates.
+
+Критерии приёмки:
+
+- перед релизом есть формальный список успешных проверок;
+- деплой не происходит при красном smoke/phpstan/unit critical.
+
+#### 7.4.4 Runtime orchestration
+
+Нужно:
+
+- выбрать один canonical production-способ запуска фоновых процессов:
+  - Docker worker;
+  - `systemd`;
+  - `supervisor`;
+  - отказ от части вариантов;
+- описать ownership для:
+  - `telegram_bot.php`;
+  - scheduler/pipeline;
+  - long-running worker processes;
+- убрать противоречия между `back_start.py`, docker-entrypoints и сервисными unit-файлами;
+- определить стратегию graceful shutdown и restart policy для каждого процесса.
+
+Критерии приёмки:
+
+- у проекта есть один официальный production runtime path;
+- остальные варианты либо удалены, либо помечены как dev/legacy;
+- эксплуатация не требует догадок, какой процесс считается основным.
+
+#### 7.4.3 Миграции, backup, rollback
+
+Нужно:
+
+- определить единый порядок:
+  - backup;
+  - schema migration;
+  - app deploy;
+  - smoke;
+  - rollback on failure;
+- выровнять SQL migrations и PHP migration scripts;
+- документировать совместимость версий схемы и кода.
+
+Критерии приёмки:
+
+- релиз можно воспроизвести по runbook;
+- rollback не зависит от ручной импровизации.
+
+## 8. Подробный TODO с приоритетами
+
+## P0. Блокеры перед деплоем
+
+- [x] Синхронизировать env naming во всех слоях: `.env.example`, runtime, `README.md`, smoke, shell scripts.
+  - ✅ `.env.example` обновлён: `DB_PASS` вместо `DB_PASSWORD`
+  - ✅ Скрипты backup/restore обновлены
+  - ⚠️ `README.md` требует обновления (см. P1)
+- [x] Устранить расхождения вокруг `ADMIN_PASSWORD`/`ADMIN_API_PASSWORD`, `DB_PASS`/`DB_PASSWORD`.
+  - ✅ Все используют `ADMIN_PASSWORD` и `DB_PASS`
+- [x] Исправить `composer test:smoke` для актуального runtime behavior.
+  - ✅ `scripts/smoke/cli_entrypoints.php` обновлён под актуальную fail-fast ошибку `bet_checker`
+- [x] Исправить падения `composer test:scanner` по `AlgorithmX`.
+  - ✅ `AlgorithmX\DataValidator` теперь считает `Finished/full time/FT` невалидным статусом до minute-check
+- [x] Закрыть раскрытие internal health diagnostics без авторизации.
+  - ✅ `healthz.php` - минимальный public endpoint
+  - ✅ `healthz_enhanced.php` - защищён опциональной аутентификацией
+- [x] Защитить `metrics.php` и `alert_webhook.php` от анонимного внешнего доступа.
+  - ✅ `metrics.php` - опциональная аутентификация через `METRICS_AUTH_ENABLED`
+  - ✅ `alert_webhook.php` - защита через `ALERT_WEBHOOK_SECRET`
+- [x] Убрать устаревшие примеры query-token auth из `README.md`.
+  - ✅ `README.md` и docblock `backend/admin/api.php` переведены на Bearer-only auth
+- [x] Убрать permissive quality steps из CI, где ошибки сейчас маскируются через `|| true`.
+  - ✅ `.github/workflows/tests.yml` больше не маскирует падения PHPStan и PHP CS Fixer
+- [x] Сформировать production security matrix по всем HTTP entrypoints.
+  - ✅ Создан `docs/http-security-matrix.md`
+
+## P1. Высокий приоритет
+
+- [x] Свести `admin/api.php` и `admin/Handlers/*` к одной архитектурной модели.
+  - ✅ `backend/admin/api.php` теперь делегирует CRUD/stats в `admin/Handlers/*`, а не дублирует бизнес-логику
+- [x] Выбрать и внедрить целевую auth-схему для admin API.
+  - ✅ canonical auth теперь `Authorization: Bearer <ADMIN_API_TOKEN>` с временным fallback на `ADMIN_PASSWORD`
+- [x] Встроить единый HTTP bootstrap/middleware pipeline.
+  - ✅ Добавлен общий `backend/bootstrap/http.php`, через него проходят public/admin/health/metrics/webhook entrypoints
+- [x] Привести `core/security` к консистентным интерфейсам.
+  - ✅ Выровнены `AuditLogger`, `RateLimiter`, `TelegramRateLimiter`, `DatabaseQueryGuard`, `StructuredLogger`
+- [x] Убрать PHPStan ошибки класса “missing symbols / wrong method calls / broken contracts”.
+  - ✅ Убраны missing symbols / wrong method calls / broken contracts; полный долг PHPStan снижен с `290` до `148`, но типовые предупреждения ещё остались
+- [x] Разделить public liveness и protected readiness endpoints.
+  - ✅ `healthz.php` оставлен минимальным public liveness, `healthz_enhanced.php` - protected readiness/diagnostics
+- [x] Сформировать production-ready Docker profile.
+  - ✅ Базовый `docker compose up -d --build` теперь поднимает minimal runtime (`app`, `worker`, `db`), а `dev`/`cache`/`observability` вынесены в profiles
+- [x] Определить политику Redis: mandatory или optional.
+  - ✅ Политика зафиксирована как optional: отсутствие расширения `Redis` больше не ломает health/state contracts, кэш включается отдельным profile
+- [x] Зафиксировать один canonical runtime для фоновых процессов и cron/pipeline.
+  - ✅ canonical runtime зафиксирован как Docker `worker` -> `docker/worker-entrypoint.sh` -> `back_start.py`; ручной запуск оставлен только для локальной диагностики
+
+## P2. Средний приоритет
+
+- [x] Рефакторинг procedural entrypoints в thin controllers/commands.
+- [x] Консолидация query building и DB access patterns.
+- [x] Ревизия индексов и hot queries.
+- [x] Ревизия batch sizes и pipeline scheduling.
+- [x] Очистка логирования и redaction policy.
+- [x] Обновление документации по реальному запуску, деплою и recovery.
+  - ✅ entrypoints `parser/live/stat/bet_checker/cleanup` переведены в thin command wrappers, cleanup вынесен в `CleanupService`
+  - ✅ добавлен общий `backend/core/Database/PdoQueryHelper.php` и применён в `MatchRepository`, `StatisticRepository`, `AuditLogger`
+  - ✅ ревизия hot queries оформлена в `docs/db-performance-review.md`, schema bootstrap и performance migration обновлены новыми индексами
+  - ✅ scanner и upsert получили управляемые batch size через `SCANNER_MATCH_BATCH_SIZE` и `MATCH_UPSERT_BATCH_SIZE`
+  - ✅ scheduler получил env-настройки интервалов и initial delay: `BACK_START_*_INTERVAL_SEC`, `BACK_START_*_INITIAL_DELAY_SEC`
+  - ✅ redaction policy оформлена в `docs/logging-redaction-policy.md`, фильтрация усилена для audit/performance/runtime логов
+  - ✅ runbook по deploy/recovery/rollback оформлен в `docs/deploy-recovery-runbook.md`
+
+## P3. Низкий, но желательный приоритет
+
+- [x] Декомпозиция `README.md` на smaller docs.
+- [x] Введение ADR по ключевым архитектурным решениям.
+- [x] Улучшение developer experience: make-like commands или unified task runner.
+- [x] Расширение e2e/security regression набора.
+
+## 9. План выполнения по этапам
+
+### Этап 1. Stabilize before refactor
+
+Задачи:
+
+- закрыть P0-блокеры;
+- починить env consistency;
+- добиться зелёного smoke;
+- устранить критичные security gaps на внешних endpoints.
+
+Результат этапа:
+
+- окружение запускается предсказуемо;
+- документация не врёт;
+- deploy не ломается на базовой конфигурации.
+
+### Этап 2. Security and contracts cleanup
+
+Задачи:
+
+- выровнять auth/authz;
+- внедрить protected health;
+- привести `core/security` к рабочим контрактам;
+- сократить критичные PHPStan ошибки.
+
+Результат этапа:
+
+- security-модель проекта прозрачна и проверяема;
+- core слой не содержит явных structural defects.
+
+### Этап 3. Architecture and performance refactor
+
+Задачи:
+
+- вытащить бизнес-логику из entrypoints;
+- консолидировать repositories/services;
+- провести query/index optimization;
+- стабилизировать scheduler/pipeline.
+
+Результат этапа:
+
+- скрипты становятся легче;
+- структура проекта становится понятнее;
+- нагрузка на runtime и БД снижается.
+
+### Этап 4. Deployment hardening
+
+Задачи:
+
+- сделать production profile;
+- собрать CI/CD quality gates;
+- оформить runbook, backup, rollback, post-deploy checks.
+
+Результат этапа:
+
+- проект готов к воспроизводимому деплою и сопровождению.
+
+## 10. Критерии готовности проекта к деплою
+
+Проект считается готовым к production deployment только если выполнены все условия:
+
+- [x] `.env.example` полностью совпадает с runtime expectations.
+- [x] `README.md` и `docs/*` не содержат устаревших способов auth/run.
+- [x] `composer test:line` green.
+- [x] `composer test:scanner` green.
+- [x] `composer test:statistic` green.
+- [x] `composer test:telegram` green без блокирующих warning/error.
+- [x] `composer test:smoke` green.
+- [ ] `phpstan` проходит на согласованном уровне.
+- [x] public/admin/health endpoints покрыты тестами безопасности.
+- [x] есть backup + rollback runbook.
+- [x] есть production compose/profile и post-deploy checklist.
+
+## 11. Рекомендуемые команды верификации после выполнения работ
+
+```powershell
+composer test:line
+composer test:scanner
+composer test:statistic
+composer test:telegram
+composer test:smoke
+vendor\bin\phpstan analyse --no-progress
 ```
 
----
+Дополнительно для pre-deploy:
 
-### Пример 2: AisCalculator.php (полная реализация)
-
-```php
-<?php
-
-declare(strict_types=1);
-
-namespace Proxbet\Scanner\Algorithms\AlgorithmX\Calculators;
-
-use Proxbet\Scanner\Algorithms\AlgorithmX\Config;
-
-final class AisCalculator
-{
-    public function calculateTeamAis(
-        int $dangerousAttacks,
-        int $shots,
-        int $shotsOnTarget,
-        int $corners
-    ): float {
-        return ($dangerousAttacks * Config::WEIGHT_DANGEROUS_ATTACKS)
-             + ($shots * Config::WEIGHT_SHOTS)
-             + ($shotsOnTarget * Config::WEIGHT_SHOTS_ON_TARGET)
-             + ($corners * Config::WEIGHT_CORNERS);
-    }
-
-    public function calculate(array $liveData): array
-    {
-        $minute = $liveData['minute'];
-        
-        $aisHome = $this->calculateTeamAis(
-            $liveData['dangerous_attacks_home'],
-            $liveData['shots_home'],
-            $liveData['shots_on_target_home'],
-            $liveData['corners_home']
-        );
-        
-        $aisAway = $this->calculateTeamAis(
-            $liveData['dangerous_attacks_away'],
-            $liveData['shots_away'],
-            $liveData['shots_on_target_away'],
-            $liveData['corners_away']
-        );
-        
-        $aisTotal = $aisHome + $aisAway;
-        $aisRate = $minute > 0 ? $aisTotal / $minute : 0.0;
-        
-        return [
-            'ais_home' => $aisHome,
-            'ais_away' => $aisAway,
-            'ais_total' => $aisTotal,
-            'ais_rate' => $aisRate,
-        ];
-    }
-}
+```powershell
+docker compose config
+docker compose up -d --build
+curl http://localhost:8080/backend/healthz.php
 ```
 
----
-
-### Пример 3: Интеграция в AlgorithmFactory.php
-
-```php
-// В методе create() добавить:
-return match ($algorithmId) {
-    1 => $this->createAlgorithmOne(),
-    2 => new AlgorithmTwo($this->filter),
-    3 => new AlgorithmThree($this->filter),
-    4 => $this->createAlgorithmX(),  // НОВОЕ
-    default => throw new \InvalidArgumentException("Unknown algorithm ID: {$algorithmId}"),
-};
-
-// Добавить новый метод:
-private function createAlgorithmX(): AlgorithmX
-{
-    $config = new AlgorithmX\Config();
-    $extractor = new AlgorithmX\DataExtractor();
-    $validator = new AlgorithmX\DataValidator();
-    
-    $aisCalculator = new AlgorithmX\Calculators\AisCalculator();
-    $modifierCalculator = new AlgorithmX\Calculators\ModifierCalculator();
-    $interpretationGenerator = new AlgorithmX\Calculators\InterpretationGenerator();
-    
-    $probabilityCalculator = new AlgorithmX\Calculators\ProbabilityCalculator(
-        $aisCalculator,
-        $modifierCalculator,
-        $interpretationGenerator
-    );
-    
-    $decisionFilter = new AlgorithmX\Filters\DecisionFilter();
-    
-    return new AlgorithmX\AlgorithmX(
-        $config,
-        $extractor,
-        $validator,
-        $probabilityCalculator,
-        $decisionFilter
-    );
-}
-```
-
----
-
-### Пример 4: Интеграция в Scanner.php
-
-```php
-// В методе scanMatch() добавить после Algorithm 3:
-
-$algorithmXData = $this->extractor->extractAlgorithmXData($match);
-$algorithmXDecision = $this->algorithmX->analyze([
-    'live_data' => $algorithmXData,
-]);
-
-// В return добавить:
-return [
-    $this->formatter->formatAlgorithmOne(...),
-    $this->formatter->formatAlgorithmTwo(...),
-    $this->formatter->formatAlgorithmThree(...),
-    $this->formatter->formatAlgorithmX(  // НОВОЕ
-        $base,
-        $liveData,
-        $algorithmXData,
-        $algorithmXDecision
-    ),
-];
-```
-
----
-
-### Пример 5: Добавление в DataExtractor.php
-
-```php
-/**
- * Extract data for AlgorithmX.
- *
- * @param array<string,mixed> $match
- * @return array<string,mixed>
- */
-public function extractAlgorithmXData(array $match): array
-{
-    $timeStr = (string) ($match['time'] ?? '00:00');
-    $minute = $this->parseMinute($timeStr);
-
-    $shotsHome = $this->getIntOrZero($match, 'live_shots_on_target_home')
-               + $this->getIntOrZero($match, 'live_shots_off_target_home');
-    $shotsAway = $this->getIntOrZero($match, 'live_shots_on_target_away')
-               + $this->getIntOrZero($match, 'live_shots_off_target_away');
-
-    return [
-        'minute' => $minute,
-        'score_home' => $this->getIntOrZero($match, 'live_ht_hscore'),
-        'score_away' => $this->getIntOrZero($match, 'live_ht_ascore'),
-        'dangerous_attacks_home' => $this->getIntOrZero($match, 'live_danger_att_home'),
-        'dangerous_attacks_away' => $this->getIntOrZero($match, 'live_danger_att_away'),
-        'shots_home' => $shotsHome,
-        'shots_away' => $shotsAway,
-        'shots_on_target_home' => $this->getIntOrZero($match, 'live_shots_on_target_home'),
-        'shots_on_target_away' => $this->getIntOrZero($match, 'live_shots_on_target_away'),
-        'corners_home' => $this->getIntOrZero($match, 'live_corner_home'),
-        'corners_away' => $this->getIntOrZero($match, 'live_corner_away'),
-        'match_status' => (string) ($match['match_status'] ?? ''),
-        'has_data' => $minute > 0,
-    ];
-}
-```
-
----
-
-## Тестовые сценарии
-
-### Сценарий 1: Высокая активность, ничья
-```php
-$liveData = [
-    'minute' => 28,
-    'score_home' => 0,
-    'score_away' => 0,
-    'dangerous_attacks_home' => 14,
-    'dangerous_attacks_away' => 6,
-    'shots_home' => 7,
-    'shots_away' => 3,
-    'shots_on_target_home' => 3,
-    'shots_on_target_away' => 1,
-    'corners_home' => 4,
-    'corners_away' => 1,
-];
-
-// Ожидаемый результат:
-// AIS_home = 14*0.4 + 7*0.3 + 3*0.2 + 4*0.1 = 8.7
-// AIS_away = 6*0.4 + 3*0.3 + 1*0.2 + 1*0.1 = 3.6
-// AIS_total = 12.3
-// AIS_rate = 12.3 / 28 = 0.439
-// base_prob = 1 / (1 + e^(-2.5 * (0.439 - 1.8))) ≈ 0.032 (3.2%)
-// Низкая вероятность → bet = false
-```
-
-### Сценарий 2: Очень высокая активность
-```php
-$liveData = [
-    'minute' => 20,
-    'score_home' => 1,
-    'score_away' => 0,
-    'dangerous_attacks_home' => 25,
-    'dangerous_attacks_away' => 18,
-    'shots_home' => 12,
-    'shots_away' => 8,
-    'shots_on_target_home' => 6,
-    'shots_on_target_away' => 4,
-    'corners_home' => 5,
-    'corners_away' => 3,
-];
-
-// Ожидаемый результат:
-// AIS_total = (25*0.4+12*0.3+6*0.2+5*0.1) + (18*0.4+8*0.3+4*0.2+3*0.1) = 16.9 + 11.9 = 28.8
-// AIS_rate = 28.8 / 20 = 1.44
-// base_prob ≈ 0.40 (40%)
-// time_remaining = 25, time_factor = 25/45 = 0.556
-// prob_adjusted = 0.40 * (0.4 + 0.6*0.556) ≈ 0.29
-// score_modifier = 1.10 (разница 1 гол)
-// prob_final = 0.29 * 1.10 ≈ 0.32 (32%)
-// Средняя вероятность → требуются доп. проверки
-```
-
-### Сценарий 3: Сухой период
-```php
-$liveData = [
-    'minute' => 35,
-    'score_home' => 0,
-    'score_away' => 0,
-    'dangerous_attacks_home' => 20,
-    'dangerous_attacks_away' => 15,
-    'shots_home' => 8,
-    'shots_away' => 6,
-    'shots_on_target_home' => 3,
-    'shots_on_target_away' => 2,
-    'corners_home' => 4,
-    'corners_away' => 2,
-];
-
-// Применяется модификатор сухого периода (0.92)
-// prob_final *= 0.92
-```
-
----
-
-## Интеграция с базой данных
-
-### Добавление поля в таблицу matches (опционально)
-
-```sql
-ALTER TABLE `matches` 
-ADD COLUMN `algorithmx_probability` DECIMAL(5,4) NULL DEFAULT NULL COMMENT 'AlgorithmX goal probability',
-ADD COLUMN `algorithmx_decision` TINYINT(1) NULL DEFAULT NULL COMMENT 'AlgorithmX bet decision',
-ADD COLUMN `algorithmx_debug` JSON NULL DEFAULT NULL COMMENT 'AlgorithmX debug data';
-```
-
-### Сохранение результатов в БД
-
-```php
-// В Scanner.php или отдельном сервисе:
-private function saveAlgorithmXResult(int $matchId, array $result): void
-{
-    $stmt = $this->db->prepare(
-        'UPDATE `matches` 
-         SET `algorithmx_probability` = ?, 
-             `algorithmx_decision` = ?,
-             `algorithmx_debug` = ?
-         WHERE `id` = ?'
-    );
-    
-    $debugJson = json_encode($result['debug'], JSON_UNESCAPED_UNICODE);
-    
-    $stmt->execute([
-        $result['confidence'],
-        $result['bet'] ? 1 : 0,
-        $debugJson,
-        $matchId,
-    ]);
-}
-```
-
----
-
-## Переменные окружения
-
-Добавить в `.env.example`:
-
-```bash
-# AlgorithmX Configuration
-ALGORITHMX_ENABLED=true
-ALGORITHMX_SIGMOID_K=2.5
-ALGORITHMX_SIGMOID_THRESHOLD=1.8
-ALGORITHMX_DECISION_THRESHOLD_HIGH=0.60
-ALGORITHMX_DECISION_THRESHOLD_LOW=0.20
-ALGORITHMX_MIN_MINUTE=5
-ALGORITHMX_MAX_MINUTE=45
-```
-
-Использование в Config.php:
-
-```php
-public static function getSigmoidK(): float
-{
-    return (float) ($_ENV['ALGORITHMX_SIGMOID_K'] ?? self::SIGMOID_K);
-}
-
-public static function isEnabled(): bool
-{
-    return filter_var(
-        $_ENV['ALGORITHMX_ENABLED'] ?? true,
-        FILTER_VALIDATE_BOOLEAN
-    );
-}
-```
-
----
-
-## Детальные спецификации классов
-
-### 1. AlgorithmX.php (главный класс)
-
-**Namespace:** `Proxbet\Scanner\Algorithms\AlgorithmX`
-
-**Implements:** `Proxbet\Core\Interfaces\AlgorithmInterface`
-
-**Зависимости:**
-- `Config` - конфигурация алгоритма
-- `DataExtractor` - извлечение данных
-- `DataValidator` - валидация данных
-- `Calculators\ProbabilityCalculator` - расчёт вероятности
-- `Filters\DecisionFilter` - принятие решения
-
-**Методы:**
-```php
-public function getId(): int                    // Возвращает Config::ALGORITHM_ID (4)
-public function getName(): string               // Возвращает Config::ALGORITHM_NAME
-public function analyze(array $matchData): array // Главный метод анализа
-```
-
-**Логика метода analyze():**
-1. Извлечь live_data из matchData через DataExtractor
-2. Валидировать данные через DataValidator
-3. Если данные невалидны - вернуть bet=false с причиной
-4. Рассчитать вероятность через ProbabilityCalculator
-5. Применить DecisionFilter для принятия решения
-6. Вернуть результат с debug-информацией
-
----
-
-### 2. Config.php
-
-**Константы:**
-```php
-const ALGORITHM_ID = 4;
-const ALGORITHM_NAME = 'AlgorithmX: Goal Probability';
-
-// Параметры сигмоиды
-const SIGMOID_K = 2.5;              // Крутизна функции
-const SIGMOID_THRESHOLD = 1.8;      // Калибровочное значение
-
-// Веса для AIS
-const WEIGHT_DANGEROUS_ATTACKS = 0.4;
-const WEIGHT_SHOTS = 0.3;
-const WEIGHT_SHOTS_ON_TARGET = 0.2;
-const WEIGHT_CORNERS = 0.1;
-
-// Модификаторы счёта
-const SCORE_MODIFIER_DRAW = 1.05;       // Ничья
-const SCORE_MODIFIER_ONE_GOAL = 1.10;   // Разница 1 гол
-const SCORE_MODIFIER_TWO_PLUS = 0.90;   // Разница 2+ гола
-
-// Модификатор сухого периода
-const DRY_PERIOD_MODIFIER = 0.92;
-const DRY_PERIOD_MINUTE_THRESHOLD = 30;
-
-// Временной фактор
-const TIME_FACTOR_MIN_WEIGHT = 0.4;
-const TIME_FACTOR_MAX_WEIGHT = 0.6;
-
-// Границы вероятности
-const PROBABILITY_MIN = 0.03;  // 3%
-const PROBABILITY_MAX = 0.97;  // 97%
-
-// Пороги для принятия решения
-const DECISION_THRESHOLD_HIGH = 0.60;    // Высокая вероятность - ставка
-const DECISION_THRESHOLD_MEDIUM = 0.40;  // Средняя вероятность - осторожно
-const DECISION_THRESHOLD_LOW = 0.20;     // Низкая вероятность - не ставить
-
-// Ограничения по времени
-const MIN_MINUTE = 5;   // Минимальная минута для анализа
-const MAX_MINUTE = 45;  // Максимальная минута (конец 1-го тайма)
-```
-
-**Методы:**
-```php
-public static function getSigmoidK(): float
-public static function getSigmoidThreshold(): float
-public static function getAisWeights(): array
-public static function getScoreModifiers(): array
-public static function getDecisionThresholds(): array
-```
-
----
-
-### 3. Calculators/AisCalculator.php
-
-**Назначение:** Расчёт Attack Intensity Score для команд
-
-**Методы:**
-```php
-/**
- * Рассчитать AIS для одной команды
- * 
- * @param int $dangerousAttacks
- * @param int $shots
- * @param int $shotsOnTarget
- * @param int $corners
- * @return float
- */
-public function calculateTeamAis(
-    int $dangerousAttacks,
-    int $shots,
-    int $shotsOnTarget,
-    int $corners
-): float
-
-/**
- * Рассчитать суммарный AIS для матча
- * 
- * @param array $liveData
- * @return array{
- *   ais_home: float,
- *   ais_away: float,
- *   ais_total: float,
- *   ais_rate: float
- * }
- */
-public function calculate(array $liveData): array
-```
-
-**Формула:**
-```php
-$ais = ($dangerousAttacks * Config::WEIGHT_DANGEROUS_ATTACKS)
-     + ($shots * Config::WEIGHT_SHOTS)
-     + ($shotsOnTarget * Config::WEIGHT_SHOTS_ON_TARGET)
-     + ($corners * Config::WEIGHT_CORNERS);
-```
-
----
-
-### 4. Calculators/ProbabilityCalculator.php
-
-**Назначение:** Основной расчёт вероятности гола
-
-**Зависимости:**
-- `AisCalculator`
-- `ModifierCalculator`
-- `InterpretationGenerator`
-
-**Методы:**
-```php
-/**
- * Рассчитать вероятность гола в оставшееся время 1-го тайма
- * 
- * @param array $liveData
- * @return array{
- *   probability: float,
- *   debug: array
- * }
- */
-public function calculate(array $liveData): array
-```
-
-**Алгоритм:**
-1. Получить AIS через AisCalculator
-2. Рассчитать базовую вероятность (сигмоида)
-3. Применить временной фактор
-4. Применить модификаторы через ModifierCalculator
-5. Ограничить вероятность (clamp)
-6. Сгенерировать интерпретацию
-7. Вернуть результат с debug-данными
-
----
-
-### 5. Calculators/ModifierCalculator.php
-
-**Назначение:** Применение модификаторов к вероятности
-
-**Методы:**
-```php
-/**
- * Применить временной фактор
- */
-public function applyTimeFactor(float $baseProb, int $minute): array
-
-/**
- * Применить модификатор счёта
- */
-public function applyScoreModifier(float $prob, int $scoreHome, int $scoreAway): array
-
-/**
- * Применить модификатор сухого периода
- */
-public function applyDryPeriodModifier(float $prob, int $scoreHome, int $scoreAway, int $minute): array
-
-/**
- * Ограничить вероятность в допустимых пределах
- */
-public function clampProbability(float $prob): float
-```
-
----
-
-### 6. Calculators/InterpretationGenerator.php
-
-**Назначение:** Генерация текстовой интерпретации вероятности
-
-**Метод:**
-```php
-/**
- * Сгенерировать интерпретацию на основе вероятности
- * 
- * @param float $probability (0.0-1.0)
- * @return string
- */
-public function generate(float $probability): string
-```
-
-**Правила интерпретации:**
-- < 20%: "Низкая активность. Матч закрытый, гол маловероятен."
-- 20-40%: "Умеренная активность. Гол возможен, но команды осторожны."
-- 40-60%: "Средняя интенсивность. Примерно равные шансы."
-- 60-80%: "Высокое давление. Гол ожидается с хорошей вероятностью."
-- > 80%: "Очень высокая активность! Гол в ближайшее время весьма вероятен."
-
----
-
-### 7. DataExtractor.php
-
-**Назначение:** Извлечение live-данных из match record
-
-**Метод:**
-```php
-/**
- * Извлечь данные для AlgorithmX из match record
- * 
- * @param array $match Запись матча из БД
- * @return array{
- *   minute: int,
- *   score_home: int,
- *   score_away: int,
- *   dangerous_attacks_home: int,
- *   dangerous_attacks_away: int,
- *   shots_home: int,
- *   shots_away: int,
- *   shots_on_target_home: int,
- *   shots_on_target_away: int,
- *   corners_home: int,
- *   corners_away: int,
- *   match_status: string,
- *   has_data: bool
- * }
- */
-public function extract(array $match): array
-```
-
-**Источники данных из match record:**
-- `time` → парсинг минуты
-- `live_ht_hscore`, `live_ht_ascore` → счёт первого тайма
-- `live_danger_att_home`, `live_danger_att_away` → опасные атаки
-- `live_shots_on_target_home`, `live_shots_on_target_away` → удары в створ
-- `live_shots_off_target_home`, `live_shots_off_target_away` → удары мимо
-- `live_corner_home`, `live_corner_away` → угловые
-- `match_status` → статус матча
-
----
-
-### 8. DataValidator.php
-
-**Назначение:** Валидация входных данных
-
-**Метод:**
-```php
-/**
- * Валидировать данные для AlgorithmX
- * 
- * @param array $data
- * @return array{valid: bool, reason: string}
- */
-public function validate(array $data): array
-```
-
-**Правила валидации:**
-1. Все обязательные поля присутствуют
-2. `minute` в диапазоне [Config::MIN_MINUTE, Config::MAX_MINUTE]
-3. Все числовые поля >= 0
-4. `has_data` === true
-5. `match_status` не "Завершён" и не "Отменён"
-
----
-
-### 9. Filters/DecisionFilter.php
-
-**Назначение:** Принятие решения о ставке на основе вероятности
-
-**Метод:**
-```php
-/**
- * Определить, делать ли ставку
- * 
- * @param float $probability Вероятность (0.0-1.0)
- * @param array $liveData Live-данные матча
- * @param array $debug Debug-информация
- * @return array{bet: bool, reason: string}
- */
-public function shouldBet(float $probability, array $liveData, array $debug): array
-```
-
-**Логика принятия решения:**
-1. Если вероятность >= DECISION_THRESHOLD_HIGH (60%) → bet=true
-2. Если вероятность < DECISION_THRESHOLD_LOW (20%) → bet=false
-3. Если между порогами → дополнительные проверки:
-   - Минута >= 10 (достаточно данных)
-   - Нет красных карточек (если доступно)
-   - AIS_rate показывает активность
-4. Генерировать понятную причину решения
-
----
-
-## TODO: Фазы реализации
-
-### Фаза 1: Создание базовой структуры AlgorithmX
-- [x] Создать директорию `backend/scanner/Algorithms/AlgorithmX/`
-- [x] Создать `AlgorithmX.php` - главный класс алгоритма (implements `AlgorithmInterface`)
-- [x] Создать `Config.php` - конфигурация алгоритма (ID, имя, параметры)
-- [x] Создать `README.md` - документация алгоритма
-
-### Фаза 2: Реализация калькуляторов
-- [x] Создать `Calculators/AisCalculator.php` - расчёт Attack Intensity Score
-- [x] Создать `Calculators/ProbabilityCalculator.php` - основной расчёт вероятности
-- [x] Создать `Calculators/ModifierCalculator.php` - применение модификаторов (счёт, время, сухой период)
-- [x] Создать `Calculators/InterpretationGenerator.php` - генерация текстовой интерпретации
-
-### Фаза 3: Извлечение и валидация данных
-- [x] Создать `DataExtractor.php` - извлечение live-данных из match record
-- [x] Создать `DataValidator.php` - валидация входных данных
-- [x] Обновить `backend/scanner/DataExtractor.php` - добавить метод `extractAlgorithmXData()`
-
-### Фаза 4: Фильтры и правила принятия решений
-- [x] Создать `Filters/DecisionFilter.php` - правила для принятия решения о ставке
-- [x] Определить пороговые значения вероятности для ставки
-- [x] Реализовать дополнительные условия фильтрации (минута, счёт, статус матча)
-
-### Фаза 5: Интеграция с Scanner
-- [x] Обновить `AlgorithmFactory.php` - добавить создание AlgorithmX (ID=4)
-- [x] Обновить `Scanner.php` - добавить обработку AlgorithmX
-- [x] Обновить `ResultFormatter.php` - добавить форматирование результатов AlgorithmX
-- [x] Добавить логирование для AlgorithmX
-
-### Фаза 6: Тестирование
-- [x] Создать `tests/AlgorithmXTest.php` - unit-тесты главного класса
-- [x] Создать `tests/DataExtractorTest.php`
-- [x] Создать `tests/DataValidatorTest.php`
-- [x] Создать `tests/Calculators/AisCalculatorTest.php`
-- [x] Создать `tests/Calculators/ProbabilityCalculatorTest.php`
-- [x] Создать `tests/Calculators/ModifierCalculatorTest.php`
-- [x] Создать `tests/Calculators/InterpretationGeneratorTest.php`
-- [x] Создать `tests/Integration/AlgorithmXFlowTest.php` - интеграционные тесты
-- [x] Создать тестовые данные (fixtures) с различными сценариями
-
-### Фаза 7: Калибровка и оптимизация
-- [x] Создать скрипт для калибровки параметров `k` и `threshold`
-- [x] Собрать исторические данные для валидации
-- [x] Реализовать метрики качества (Brier Score, ROC-AUC)
-- [x] Оптимизировать веса в формуле AIS (0.4, 0.3, 0.2, 0.1)
-
-### Фаза 8: Документация и деплой
-- [x] Обновить `docs/prompt.md` - добавить описание AlgorithmX
-- [x] Создать примеры использования (`docs/ALGORITHMX_USAGE_EXAMPLES.md`)
-- [x] Добавить переменные окружения в `.env.example`
-- [x] Обновить `README.md` проекта
-
----
-
-## Структура файлов
-
-```
-backend/scanner/Algorithms/AlgorithmX/
-├── AlgorithmX.php                          # Главный класс (implements AlgorithmInterface)
-├── CALIBRATION.md                          # Руководство по калибровке
-├── Config.php                              # Конфигурация (ID=4, параметры k, threshold)
-├── README.md                               # Документация алгоритма
-├── DataExtractor.php                       # Извлечение данных из match record
-├── DataValidator.php                       # Валидация входных данных
-├── Calculators/
-│   ├── AisCalculator.php                   # Расчёт Attack Intensity Score
-│   ├── ProbabilityCalculator.php           # Основной расчёт вероятности
-│   ├── ModifierCalculator.php              # Применение модификаторов
-│   └── InterpretationGenerator.php         # Генерация текстовой интерпретации
-├── Filters/
-│   └── DecisionFilter.php                  # Правила принятия решения о ставке
-├── Metrics/
-│   └── QualityMetrics.php                  # Brier Score, ROC-AUC, calibration curve
-└── tests/
-    ├── AlgorithmXTest.php
-    ├── DataExtractorTest.php
-    ├── DataValidatorTest.php
-    ├── Calculators/
-    │   ├── AisCalculatorTest.php
-    │   ├── ProbabilityCalculatorTest.php
-    │   ├── ModifierCalculatorTest.php
-    │   └── InterpretationGeneratorTest.php
-    ├── Filters/
-    │   └── DecisionFilterTest.php
-    ├── Fixtures/
-    │   └── AlgorithmXScenarioFixtures.php
-    └── Integration/
-        └── AlgorithmXFlowTest.php
-```
-
----
-
-## Входные данные
-
-Алгоритм получает live-статистику матча:
-- `minute` - текущая минута матча (int)
-- `score_home` - голы хозяев (int)
-- `score_away` - голы гостей (int)
-- `dangerous_attacks_home` - опасные атаки хозяев (int)
-- `dangerous_attacks_away` - опасные атаки гостей (int)
-- `shots_home` - удары хозяев (int)
-- `shots_away` - удары гостей (int)
-- `shots_on_target_home` - удары в створ хозяев (int)
-- `shots_on_target_away` - удары в створ гостей (int)
-- `corners_home` - угловые хозяев (int)
-- `corners_away` - угловые гостей (int)
-
----
-
-## Алгоритм расчёта
-
-### Шаг 1: Attack Intensity Score (AIS)
-Для каждой команды:
-```
-AIS = (dangerous_attacks × 0.4) + (shots × 0.3) + (shots_on_target × 0.2) + (corners × 0.1)
-AIS_total = AIS_home + AIS_away
-```
-
-### Шаг 2: Нормализация по времени
-```
-AIS_rate = AIS_total / minute
-```
-
-### Шаг 3: Базовая вероятность (сигмоида)
-```
-base_prob = 1 / (1 + e^(−k × (AIS_rate − threshold)))
-```
-Параметры:
-- `k = 2.5` (крутизна)
-- `threshold = 1.8` (калибровочное значение)
-
-### Шаг 4: Временной фактор
-```
-time_remaining = 45 - minute
-time_factor = time_remaining / 45
-prob_adjusted = base_prob × (0.4 + 0.6 × time_factor)
-```
-
-### Шаг 5: Модификатор счёта
-```
-score_diff = abs(score_home - score_away)
-
-if score_diff == 0:
-    score_modifier = 1.05  // ничья - обе команды мотивированы
-elif score_diff == 1:
-    score_modifier = 1.10  // разница 1 гол - проигрывающая давит
-else:
-    score_modifier = 0.90  // разница 2+ - победитель защищается
-
-prob_final = prob_adjusted × score_modifier
-prob_final = clamp(prob_final, 0.03, 0.97)  // 3-97%
-```
-
-### Шаг 6: Модификатор "сухого периода"
-```
-if score_home == 0 and score_away == 0 and minute > 30:
-    prob_final *= 0.92
-```
-
----
-
-## Выходные данные
-
-Алгоритм возвращает (согласно `AlgorithmInterface`):
-```php
-[
-    'bet' => bool,              // решение о ставке
-    'reason' => string,         // причина решения
-    'confidence' => float,      // вероятность (0.0-1.0)
-    'debug' => [                // отладочная информация
-        'ais_home' => float,
-        'ais_away' => float,
-        'ais_total' => float,
-        'ais_rate' => float,
-        'base_prob' => float,
-        'time_remaining' => int,
-        'time_factor' => float,
-        'prob_adjusted' => float,
-        'score_modifier' => float,
-        'dry_period_applied' => bool,
-        'prob_final' => float,
-        'interpretation' => string,
-    ]
-]
-```
-
----
+## 12. Примечания по текущим найденным несоответствиям
+
+### ✅ ИСПРАВЛЕНО (2026-03-22)
+
+- ✅ `.env.example` синхронизирован: теперь использует `DB_PASS` вместо `DB_PASSWORD`
+- ✅ Скрипты `backup_database.sh` и `restore_database.sh` обновлены для использования `DB_PASS`
+- ✅ `backend/healthz.php` переделан в минимальный public liveness endpoint
+- ✅ `backend/healthz_enhanced.php` защищён через `HealthEndpointAuth` с опциональной аутентификацией
+- ✅ `backend/metrics.php` защищён опциональной аутентификацией через `METRICS_AUTH_ENABLED` и `METRICS_SECRET_TOKEN`
+- ✅ `backend/alert_webhook.php` защищён через `ALERT_WEBHOOK_SECRET` с проверкой Bearer token или X-Webhook-Secret header
+- ✅ `scripts/smoke/cli_entrypoints.php` синхронизирован с актуальным fail-fast сообщением `bet_checker`
+- ✅ `AlgorithmX\DataValidator` снова валидирует завершённый матч раньше minute-check, `composer test:scanner` зелёный
+- ✅ `README.md` и `backend/admin/api.php` очищены от legacy query-token auth примеров
+- ✅ `.github/workflows/tests.yml` больше не скрывает проблемы через `|| true`
+- ✅ Создан `docs/http-security-matrix.md` с production access policy для HTTP entrypoints
+- ✅ `composer test:telegram` больше не падает из-за `No code coverage driver available`
+- ✅ `tests/security/*` и `tests/e2e/*` корректно пропускают HTTP regression-проверки, если локальный runtime не поднят
+- ✅ `scripts/test_security_phase1.php` синхронизирован с canonical admin Bearer auth (`ADMIN_API_TOKEN` с fallback на `ADMIN_PASSWORD`)
+- ✅ Добавлены новые переменные окружения в `.env.example`:
+  - `HEALTH_AUTH_ENABLED`, `HEALTH_AUTH_USERNAME`, `HEALTH_AUTH_PASSWORD`, `HEALTH_ALLOWED_IPS`
+  - `METRICS_AUTH_ENABLED`, `METRICS_SECRET_TOKEN`
+  - `ALERT_WEBHOOK_SECRET`
+  - `API_URL_LIVE` (было пропущено)
+
+### ⚠️ ТРЕБУЕТ ВНИМАНИЯ
+
+- ⚠️ PHPStan всё ещё находит **149 ошибок** статического анализа:
+  - в основном `missingType.*`, `nullCoalesce.offset`, `ternary.elseUnreachable`
+  - class/method contract blockers из security/core слоя уже устранены
+- ✅ README и `docs/*` синхронизированы по canonical runtime, deploy runbook и rollback-документ вынесены в `docs/deploy-recovery-runbook.md`
+- ✅ `README.md` декомпозирован: добавлены `docs/project-overview.md`, `docs/runtime-architecture.md`, `docs/http-api-reference.md`, `docs/data-model.md`, `docs/developer-workflow.md`
+- ✅ Введён ADR-архив в `docs/adr/*` для ключевых решений по runtime, health endpoints, admin auth и optional Redis
+- ✅ Добавлен unified task runner `php scripts/task.php ...` и composer alias-команды `test:security`, `test:e2e`, `test:regression`, `validate`
+- ✅ Расширены e2e/security regression тесты для `healthz.php`, `healthz_enhanced.php`, `metrics.php`, `alert_webhook.php`
+
+## 13. Детальный анализ PHPStan ошибок (290 найдено)
+
+### Критические проблемы (требуют создания классов)
+
+1. **Отсутствующие классы исключений**:
+   - ✅ `Proxbet\Core\Exceptions\SecurityException` - создан
+   - ✅ `Proxbet\Core\Exceptions\NotFoundException` - создан
+   - ✅ `Proxbet\Core\Exceptions\ValidationException` - приведён к рабочему контракту
+   - ✅ `Proxbet\Core\Exceptions\ProxbetException` - дополнен методами `getDetails()`, `isUserFriendly()`, `getHttpStatusCode()`
+
+2. **Несуществующие методы**:
+   - ✅ `RateLimiter::checkLimit()` - добавлен
+   - ✅ `RateLimiter::getRemainingRequests()` - добавлен
+   - ✅ `TelegramRateLimiter::checkLimit()` - добавлен
+   - ✅ `DatabaseQueryGuard::executeQuery()` - добавлен
+   - ✅ `DDoSProtection::checkRequest()` - использование выровнено по актуальной сигнатуре
+   - ✅ `Logger::debug()` - добавлен
+
+### Средние проблемы (не блокируют работу)
+
+3. **Unreachable code** (50+ случаев):
+   - Ternary операторы с always true условиями
+   - Недостижимые else ветки
+   - Недостижимые match arms
+
+4. **Type issues** (100+ случаев):
+   - Missing parameter types (особенно в PSR-3 логгерах)
+   - Missing return types
+   - Array key type mismatches
+   - Comparison operations с несовместимыми типами
+
+5. **Unused code** (10+ случаев):
+   - Неиспользуемые константы классов
+   - Неиспользуемые методы
+   - Write-only свойства
+
+### Рекомендации по исправлению
+
+**Приоритет 1** (блокирует качество кода):
+- Создать недостающие классы исключений в `backend/core/Exceptions/`
+- Исправить сигнатуры методов в security классах
+- Убрать `|| true` из CI workflow
+
+**Приоритет 2** (улучшает надёжность):
+- Добавить типы параметров и возвращаемых значений
+- Убрать unreachable code
+- Исправить логику с always true/false условиями
+
+**Приоритет 3** (code cleanup):
+- Удалить unused код
+- Исправить PHPDoc несоответствия
+
+## 14. Анализ Docker Compose конфигурации
+
+### Текущее состояние
+
+Docker Compose включает **13 сервисов**:
+- `app` - Apache + PHP backend
+- `worker` - фоновые задачи (back_start.py)
+- `db` - MySQL 8.4
+- `phpmyadmin` - веб-интерфейс БД
+- `redis` - кэширование
+- `prometheus` - сбор метрик
+- `grafana` - визуализация
+- `loki` - агрегация логов
+- `promtail` - отправка логов
+- `alertmanager` - маршрутизация алертов
+- `node-exporter` - системные метрики
+- `mysql-exporter` - метрики БД
+- `redis-exporter` - метрики кэша
+
+### Проблемы
+
+1. **Профили для окружений внедрены**:
+   - Базовый compose поднимает только `app`, `worker`, `db`
+   - `dev` добавляет `phpmyadmin`
+   - `cache` включает optional Redis
+   - `observability` включает Prometheus/Grafana/Loki/Alertmanager/exporters
+
+2. **Рекомендации**:
+   - Использовать базовый `docker compose up -d --build` как minimal production-friendly stack
+   - При необходимости добавлять `docker compose --profile cache up -d --build`
+   - Для разработки использовать `docker compose --profile dev up -d --build`
+   - Для мониторинга использовать `docker compose --profile observability up -d --build`
+
+## 15. Приоритет следующего практического шага
+
+### ✅ P0 закрыт, этап 1 продолжается (2026-03-22)
+
+Выполнено:
+- ✅ Синхронизированы env переменные
+- ✅ Защищены health/metrics/webhook endpoints
+- ✅ Обновлены backup/restore скрипты
+
+Осталось:
+- ⚠️ Довести общий PHPStan quality gate до зелёного состояния
+
+### Следующие шаги
+
+**Немедленно** (можно сделать за 1-2 часа):
+1. Добить остаточные PHPStan type warnings в shared/core слоях
+2. Проверить compose-профили на целевой инфраструктуре
+3. Прогнать `test:security` и `test:e2e` на поднятом HTTP runtime с реальными test secrets
+
+**Краткосрочно** (1-2 дня):
+4. Сократить `missingType.*` и `nullCoalesce.*` предупреждения PHPStan
+5. Проверить security/e2e regression на CI или staging-окружении
+6. Зафиксировать post-deploy checklist на целевой инфраструктуре
+
+**Среднесрочно** (неделя):
+7. Исправить критические PHPStan ошибки и оставшиеся проблемные контракты
+8. Добавить типы параметров в критичных местах
+9. Провести security audit с проверкой SQL injection
+12. Оптимизировать тяжёлые запросы к БД

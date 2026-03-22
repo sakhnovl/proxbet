@@ -83,6 +83,21 @@ class DatabaseQueryGuard
     }
 
     /**
+     * @param array<mixed> $params
+     */
+    public function executeQuery(string $query, array $params = [], ?int $limit = null): PDOStatement
+    {
+        if (preg_match('/^\s*SELECT\s+/i', $query) === 1) {
+            return $this->executeSelect($query, $params, $limit);
+        }
+
+        $stmt = $this->pdo->prepare($query);
+        $stmt->execute($params);
+
+        return $stmt;
+    }
+
+    /**
      * Validate and sanitize ORDER BY clause
      * 
      * @param string $orderBy Order by clause

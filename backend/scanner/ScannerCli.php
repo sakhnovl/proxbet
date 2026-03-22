@@ -31,6 +31,7 @@ use Proxbet\Scanner\Algorithms\AlgorithmX\DataExtractor as AlgorithmXDataExtract
 use Proxbet\Scanner\Algorithms\AlgorithmX\DataValidator as AlgorithmXDataValidator;
 use Proxbet\Scanner\Algorithms\AlgorithmX\Filters\DecisionFilter as AlgorithmXDecisionFilter;
 use Proxbet\Scanner\AlgorithmOneChannelVerdictGenerator;
+use Proxbet\Scanner\AlgorithmXChannelVerdictGenerator;
 use Proxbet\Scanner\BetMessageRepository;
 use Proxbet\Scanner\DataExtractor;
 use Proxbet\Scanner\MatchFilter;
@@ -122,12 +123,14 @@ try {
             $repository = new BetMessageRepository($db);
             $telegramAiRepository = new TelegramAiRepository($db);
             $algorithmOneVerdictGenerator = new AlgorithmOneChannelVerdictGenerator($telegramAiRepository);
+            $algorithmXVerdictGenerator = new AlgorithmXChannelVerdictGenerator($telegramAiRepository);
             $notifier = new TelegramNotifier(
                 $token,
                 $channelId,
                 $statePath,
                 $repository,
-                $algorithmOneVerdictGenerator
+                $algorithmOneVerdictGenerator,
+                $algorithmXVerdictGenerator
             );
             Logger::info('Telegram notifier initialized', ['channel_id' => $channelId]);
         }

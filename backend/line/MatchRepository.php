@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Proxbet\Line;
 
+use Proxbet\Core\Database\PdoQueryHelper;
 use Proxbet\Core\Interfaces\RepositoryInterface;
 
 /**
@@ -25,11 +26,12 @@ final class MatchRepository implements RepositoryInterface
      */
     public function findById(int $id): ?array
     {
-        $stmt = $this->db->prepare('SELECT * FROM matches WHERE id = :id LIMIT 1');
-        $stmt->execute(['id' => $id]);
-        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
-        
-        return $result !== false ? $result : null;
+        return PdoQueryHelper::fetchOne(
+            $this->db,
+            'SELECT * FROM `matches` WHERE `id` = :id LIMIT 1',
+            [':id' => $id],
+            [':id' => \PDO::PARAM_INT]
+        );
     }
 
     /**
@@ -42,29 +44,22 @@ final class MatchRepository implements RepositoryInterface
      */
     public function findBy(array $criteria = [], int $limit = 100, int $offset = 0): array
     {
-        $where = [];
-        $params = [];
-        
-        foreach ($criteria as $key => $value) {
-            $where[] = "{$key} = :{$key}";
-            $params[$key] = $value;
-        }
-        
-        $sql = 'SELECT * FROM matches';
-        if (!empty($where)) {
-            $sql .= ' WHERE ' . implode(' AND ', $where);
-        }
-        $sql .= ' LIMIT :limit OFFSET :offset';
-        
-        $stmt = $this->db->prepare($sql);
-        foreach ($params as $key => $value) {
-            $stmt->bindValue(":{$key}", $value);
-        }
-        $stmt->bindValue(':limit', $limit, \PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
-        $stmt->execute();
-        
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        $where = PdoQueryHelper::buildEqualsWhere($criteria);
+        $params = $where['params'] + [
+            ':limit' => max(1, $limit),
+            ':offset' => max(0, $offset),
+        ];
+        $types = $where['types'] + [
+            ':limit' => \PDO::PARAM_INT,
+            ':offset' => \PDO::PARAM_INT,
+        ];
+
+        return PdoQueryHelper::fetchAll(
+            $this->db,
+            'SELECT * FROM `matches`' . $where['sql'] . ' LIMIT :limit OFFSET :offset',
+            $params,
+            $types
+        );
     }
 
     /**
@@ -117,8 +112,7 @@ final class MatchRepository implements RepositoryInterface
             implode(', ', $placeholders)
         );
         
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($data);
+        PdoQueryHelper::execute($this->db, $sql, $this->normalizeNamedParams($data));
         
         return (int) $this->db->lastInsertId();
     }
@@ -142,8 +136,7 @@ final class MatchRepository implements RepositoryInterface
         );
         
         $data['id'] = $id;
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($data);
+        PdoQueryHelper::execute($this->db, $sql, $this->normalizeNamedParams($data));
         
         return $id;
     }
@@ -156,10 +149,12 @@ final class MatchRepository implements RepositoryInterface
      */
     public function delete(int $id): bool
     {
-        $stmt = $this->db->prepare('DELETE FROM matches WHERE id = :id');
-        $stmt->execute(['id' => $id]);
-        
-        return $stmt->rowCount() > 0;
+        return PdoQueryHelper::execute(
+            $this->db,
+            'DELETE FROM `matches` WHERE `id` = :id',
+            [':id' => $id],
+            [':id' => \PDO::PARAM_INT]
+        ) > 0;
     }
 
     /**
@@ -175,5 +170,19 @@ final class MatchRepository implements RepositoryInterface
         }
 
         return Db::upsertMatches($this->db, $matches);
+    }
+
+    /**
+     * @param array<string,mixed> $params
+     * @return array<string,mixed>
+     */
+    private function normalizeNamedParams(array $params): array
+    {
+        $normalized = [];
+        foreach ($params as $key => $value) {
+            $normalized[':' . ltrim((string) $key, ':')] = $value;
+        }
+
+        return $normalized;
     }
 }

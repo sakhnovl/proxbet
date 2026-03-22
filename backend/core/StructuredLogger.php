@@ -112,7 +112,7 @@ final class StructuredLogger
     }
 
     /** @param array<string,mixed> $context */
-    private function log(string $level, string $message, array $context): void
+    public function log(string $level, string $message, array $context = []): void
     {
         if ($this->stream === null) {
             return;
@@ -147,7 +147,7 @@ final class StructuredLogger
         foreach ($exception->getTrace() as $frame) {
             $file = $frame['file'] ?? 'unknown';
             $line = $frame['line'] ?? 0;
-            $function = $frame['function'] ?? 'unknown';
+            $function = $frame['function'];
             $class = $frame['class'] ?? '';
             $type = $frame['type'] ?? '';
             

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Proxbet\Statistic;
 
 use PDO;
+use Proxbet\Core\Database\PdoQueryHelper;
 use Proxbet\Statistic\Interfaces\StatisticRepositoryInterface;
 
 final class StatisticRepository implements StatisticRepositoryInterface
@@ -100,18 +101,12 @@ final class StatisticRepository implements StatisticRepositoryInterface
             . $where
             . ' ORDER BY `id` ASC LIMIT :limit OFFSET :offset';
 
-        $stmt = $this->db->prepare($sql);
-        foreach ($params as $key => $value) {
-            $stmt->bindValue($key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
-        }
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if (!is_array($rows)) {
-            return [];
-        }
+        $rows = PdoQueryHelper::fetchAll(
+            $this->db,
+            $sql,
+            $params + [':limit' => $limit, ':offset' => $offset],
+            $this->detectTypes($params) + [':limit' => PDO::PARAM_INT, ':offset' => PDO::PARAM_INT]
+        );
 
         $out = [];
         foreach ($rows as $r) {
@@ -135,10 +130,12 @@ final class StatisticRepository implements StatisticRepositoryInterface
 
     public function saveSgiJson(int $matchId, string $rawJson): void
     {
-        $stmt = $this->db->prepare('UPDATE `matches` SET `sgi_json`=:json WHERE `id`=:id');
-        $stmt->bindValue(':json', $rawJson, PDO::PARAM_STR);
-        $stmt->bindValue(':id', $matchId, PDO::PARAM_INT);
-        $stmt->execute();
+        PdoQueryHelper::execute(
+            $this->db,
+            'UPDATE `matches` SET `sgi_json` = :json WHERE `id` = :id',
+            [':json' => $rawJson, ':id' => $matchId],
+            [':json' => PDO::PARAM_STR, ':id' => PDO::PARAM_INT]
+        );
     }
 
     /**
@@ -150,37 +147,17 @@ final class StatisticRepository implements StatisticRepositoryInterface
             return;
         }
 
-        $allowedSet = array_flip(self::METRIC_COLUMNS);
-
-        $pairs = [];
-        $params = [':id' => $matchId];
-        foreach ($metrics as $col => $val) {
-            if (!isset($allowedSet[$col])) {
-                continue;
-            }
-
-            $ph = ':' . $col;
-            $pairs[] = '`' . $col . '`=' . $ph;
-            $params[$ph] = $val;
-        }
-
-        if ($pairs === []) {
+        $update = PdoQueryHelper::buildUpdatePairs($metrics, self::METRIC_COLUMNS, 'metric');
+        if ($update['sql'] === '') {
             return;
         }
 
-        $sql = 'UPDATE `matches` SET ' . implode(', ', $pairs) . ' WHERE `id`=:id';
-        $stmt = $this->db->prepare($sql);
-        foreach ($params as $k => $v) {
-            if ($v === null) {
-                $type = PDO::PARAM_NULL;
-            } elseif (is_int($v)) {
-                $type = PDO::PARAM_INT;
-            } else {
-                $type = PDO::PARAM_STR;
-            }
-            $stmt->bindValue($k, $v, $type);
-        }
-        $stmt->execute();
+        PdoQueryHelper::execute(
+            $this->db,
+            'UPDATE `matches` SET ' . $update['sql'] . ' WHERE `id` = :id',
+            $update['params'] + [':id' => $matchId],
+            $update['types'] + [':id' => PDO::PARAM_INT]
+        );
     }
 
     /**
@@ -188,35 +165,30 @@ final class StatisticRepository implements StatisticRepositoryInterface
      */
     public function saveStatMeta(int $matchId, array $data): void
     {
-        $pairs = [];
-        $params = [':id' => $matchId];
-        $allowed = array_flip(self::STATUS_COLUMNS);
-
-        foreach ($data as $column => $value) {
-            if (!isset($allowed[$column])) {
-                continue;
-            }
-
-            $pairs[] = '`' . $column . '`=:' . $column;
-            $params[':' . $column] = $value;
-        }
-
-        if ($pairs === []) {
+        $update = PdoQueryHelper::buildUpdatePairs($data, self::STATUS_COLUMNS, 'status');
+        if ($update['sql'] === '') {
             return;
         }
 
-        $sql = 'UPDATE `matches` SET ' . implode(', ', $pairs) . ' WHERE `id`=:id';
-        $stmt = $this->db->prepare($sql);
+        PdoQueryHelper::execute(
+            $this->db,
+            'UPDATE `matches` SET ' . $update['sql'] . ' WHERE `id` = :id',
+            $update['params'] + [':id' => $matchId],
+            $update['types'] + [':id' => PDO::PARAM_INT]
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $params
+     * @return array<string,int>
+     */
+    private function detectTypes(array $params): array
+    {
+        $types = [];
         foreach ($params as $key => $value) {
-            if ($value === null) {
-                $type = PDO::PARAM_NULL;
-            } elseif (is_int($value)) {
-                $type = PDO::PARAM_INT;
-            } else {
-                $type = PDO::PARAM_STR;
-            }
-            $stmt->bindValue($key, $value, $type);
+            $types[$key] = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
         }
-        $stmt->execute();
+
+        return $types;
     }
 }

@@ -21,7 +21,7 @@ PATTERNS=(
     "SECRET_KEY=['\"]?[a-zA-Z0-9_-]{20,}['\"]?"
     
     # Database credentials
-    "DB_PASSWORD=['\"]?[^'\"\s]{3,}['\"]?"
+    "DB_PASS=['\"]?[^'\"\s]{3,}['\"]?"
     "MYSQL_PASSWORD=['\"]?[^'\"\s]{3,}['\"]?"
     "DATABASE_URL=.*:.*@"
     

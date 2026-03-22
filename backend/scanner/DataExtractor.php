@@ -20,6 +20,10 @@ use Proxbet\Scanner\Algorithms\AlgorithmOne\Services\LeagueProfileService;
  */
 final class DataExtractor
 {
+    private const BATCH_SIZE_DEFAULT = 100;
+    private const BATCH_SIZE_MIN = 1;
+    private const BATCH_SIZE_MAX = 1000;
+
     public function __construct(
         private PDO $db,
         private ?LeagueProfileService $leagueProfileService = null
@@ -43,7 +47,7 @@ final class DataExtractor
                 ORDER BY `id` ASC';
 
         if ($limit !== null) {
-            $sql .= ' LIMIT ' . max(1, $limit) . ' OFFSET ' . max(0, $offset);
+            $sql .= ' LIMIT ' . $this->normalizeBatchSize($limit) . ' OFFSET ' . max(0, $offset);
         }
 
         $stmt = $this->db->query($sql);
@@ -61,6 +65,7 @@ final class DataExtractor
      */
     public function getActiveMatchesGenerator(int $batchSize = 100): \Generator
     {
+        $batchSize = $this->normalizeBatchSize($batchSize);
         $offset = 0;
         
         while (true) {
@@ -96,6 +101,14 @@ final class DataExtractor
         $count = $stmt->fetchColumn();
 
         return is_numeric($count) ? (int) $count : 0;
+    }
+
+    public static function resolveConfiguredBatchSize(): int
+    {
+        $raw = getenv('SCANNER_MATCH_BATCH_SIZE');
+        $value = is_string($raw) && $raw !== '' ? (int) $raw : self::BATCH_SIZE_DEFAULT;
+
+        return max(self::BATCH_SIZE_MIN, min(self::BATCH_SIZE_MAX, $value));
     }
 
     /**
@@ -515,6 +528,11 @@ final class DataExtractor
             return max(0, (int) $parts[0]);
         }
         return 0;
+    }
+
+    private function normalizeBatchSize(int $batchSize): int
+    {
+        return max(self::BATCH_SIZE_MIN, min(self::BATCH_SIZE_MAX, $batchSize));
     }
 
     /**

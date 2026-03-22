@@ -29,11 +29,18 @@ try {
         throw new RuntimeException('Failed to read migration file');
     }
 
-    // Split by semicolons and execute each statement
-    $statements = array_filter(
-        array_map('trim', explode(';', $sql)),
-        fn($stmt) => $stmt !== '' && !str_starts_with($stmt, '--')
-    );
+    $statements = [];
+    foreach (preg_split('/;\s*[\r\n]+/', $sql) ?: [] as $statement) {
+        $lines = preg_split('/\R/', trim($statement)) ?: [];
+        $filteredLines = array_values(array_filter(
+            $lines,
+            static fn(string $line): bool => trim($line) !== '' && !str_starts_with(trim($line), '--')
+        ));
+
+        if ($filteredLines !== []) {
+            $statements[] = implode("\n", $filteredLines);
+        }
+    }
 
     $pdo->beginTransaction();
     

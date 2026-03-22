@@ -5,22 +5,34 @@ declare(strict_types=1);
 namespace Proxbet\Tests\E2E;
 
 use PHPUnit\Framework\TestCase;
+use Proxbet\Tests\Support\HttpRuntimeAwareTrait;
 
 /**
  * E2E tests for admin panel workflows.
  */
 final class AdminPanelWorkflowTest extends TestCase
 {
+    use HttpRuntimeAwareTrait;
+
     private string $apiBaseUrl;
     private string $adminToken;
 
     protected function setUp(): void
     {
         $this->apiBaseUrl = getenv('TEST_API_URL') ?: 'http://localhost:8080';
-        $this->adminToken = getenv('TEST_ADMIN_TOKEN') ?: 'test_token';
+        $this->adminToken = (string) (
+            getenv('TEST_ADMIN_TOKEN')
+            ?: getenv('ADMIN_API_TOKEN')
+            ?: getenv('ADMIN_PASSWORD')
+            ?: ''
+        );
         
         if (getenv('RUN_E2E_TESTS') !== '1') {
             $this->markTestSkipped('E2E tests disabled. Set RUN_E2E_TESTS=1 to enable.');
+        }
+
+        if (!$this->isRuntimeAvailable($this->apiBaseUrl)) {
+            $this->markTestSkipped('E2E tests require an available HTTP runtime. Configure TEST_API_URL or start the app.');
         }
     }
 
@@ -34,6 +46,10 @@ final class AdminPanelWorkflowTest extends TestCase
 
     public function testAdminCanListBans(): void
     {
+        if ($this->adminToken === '') {
+            $this->markTestSkipped('Admin E2E tests require TEST_ADMIN_TOKEN or runtime admin credentials.');
+        }
+
         $response = $this->makeRequest(
             'GET',
             '/backend/admin/api.php?action=list_bans&limit=10&offset=0',
@@ -48,6 +64,10 @@ final class AdminPanelWorkflowTest extends TestCase
 
     public function testAdminCanAddBan(): void
     {
+        if ($this->adminToken === '') {
+            $this->markTestSkipped('Admin E2E tests require TEST_ADMIN_TOKEN or runtime admin credentials.');
+        }
+
         $banData = [
             'country' => 'Test E2E Country',
             'liga' => 'Test E2E League',
@@ -70,6 +90,10 @@ final class AdminPanelWorkflowTest extends TestCase
 
     public function testAdminCanViewStats(): void
     {
+        if ($this->adminToken === '') {
+            $this->markTestSkipped('Admin E2E tests require TEST_ADMIN_TOKEN or runtime admin credentials.');
+        }
+
         $response = $this->makeRequest(
             'GET',
             '/backend/admin/api.php?action=stats',

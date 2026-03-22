@@ -92,26 +92,23 @@ try {
 echo "\n";
 
 // Test 4: Test Admin API authentication
-echo "[4/8] Тестирование Admin API аутентификации...\n";
-$adminPassword = getenv('ADMIN_PASSWORD');
-if ($adminPassword && $adminPassword !== 'change_me_to_a_strong_secret') {
-    echo "✅ ADMIN_PASSWORD установлен\n";
-    
-    // Test that query string auth is disabled
-    echo "   Проверка: query string аутентификация отключена...\n";
-    $testUrl = "http://localhost:8080/backend/admin/api.php?action=stats_overview&token=" . $adminPassword;
-    
-    // Note: We can't actually test HTTP requests from CLI easily, so we check the code
+echo "[4/8] Проверка Admin API аутентификации...\n";
+$adminToken = getenv('ADMIN_API_TOKEN') ?: getenv('ADMIN_PASSWORD');
+if ($adminToken && $adminToken !== 'change_me_to_a_strong_secret' && $adminToken !== 'your_admin_api_token_here') {
+    echo "✅ Admin API credential configured\n";
+
+    // We validate bootstrap policy here instead of making a real HTTP request.
+    echo "   Проверка: legacy query token auth отключен...\n";
     $apiCode = file_get_contents(__DIR__ . '/../backend/admin/api.php');
-    if (strpos($apiCode, 'elseif (isset($_GET[\'token\']))') === false) {
-        echo "   ✅ Query string аутентификация удалена из кода\n";
+    if (strpos($apiCode, '$_GET[\'token\']') === false) {
+        echo "   ✅ Query string token auth не используется\n";
         $results['admin_auth'] = true;
     } else {
-        echo "   ⚠️  Query string аутентификация все еще в коде\n";
+        echo "   ⚠️  Query string token auth все еще найден\n";
         $results['admin_auth'] = false;
     }
 } else {
-    echo "⚠️  ADMIN_PASSWORD не изменен с дефолтного значения\n";
+    echo "⚠️  ADMIN_API_TOKEN или ADMIN_PASSWORD не настроен для проверки\n";
     $results['admin_auth'] = false;
 }
 echo "\n";

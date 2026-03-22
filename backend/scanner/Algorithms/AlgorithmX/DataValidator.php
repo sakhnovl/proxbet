@@ -109,7 +109,7 @@ final class DataValidator
             return false;
         }
 
-        $pattern = '/(\x{0437}\x{0430}\x{0432}\x{0435}\x{0440}\x{0448}|\x{043E}\x{0442}\x{043C}\x{0435}\x{043D}|finished|cancelled|postponed)/iu';
+        $pattern = '/(\x{0437}\x{0430}\x{0432}\x{0435}\x{0440}\x{0448}|\x{043E}\x{0442}\x{043C}\x{0435}\x{043D}|завершен|2-й тайм|postponed|finished|full\s*time|ft)/iu';
 
         return preg_match($pattern, $matchStatus) === 1;
     }
