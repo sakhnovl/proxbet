@@ -53,7 +53,7 @@ final class DataExtractor
         $stmt = $this->db->query($sql);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return is_array($rows) ? $rows : [];
+        return $rows;
     }
 
     /**
@@ -524,7 +524,7 @@ final class DataExtractor
     private function parseMinute(string $time): int
     {
         $parts = explode(':', $time);
-        if (count($parts) >= 1 && is_numeric($parts[0])) {
+        if (is_numeric($parts[0])) {
             return max(0, (int) $parts[0]);
         }
         return 0;
@@ -566,14 +566,6 @@ final class DataExtractor
     private function getIntOrZero(array $data, string $key): int
     {
         return $this->getIntOrNull($data, $key) ?? 0;
-    }
-
-    /**
-     * @param array<string,mixed> $data
-     */
-    private function getFloatOrZero(array $data, string $key): float
-    {
-        return $this->getFloatOrNull($data, $key) ?? 0.0;
     }
 
     /**
@@ -699,6 +691,7 @@ final class DataExtractor
                    + $this->getIntOrZero($match, 'live_shots_off_target_home');
         $shotsAway = $this->getIntOrZero($match, 'live_shots_on_target_away')
                    + $this->getIntOrZero($match, 'live_shots_off_target_away');
+        $hasData = $minute > 0 && $this->hasRequiredAlgorithmXStatistics($match);
 
         return [
             'minute' => $minute,
@@ -713,8 +706,36 @@ final class DataExtractor
             'corners_home' => $this->getIntOrZero($match, 'live_corner_home'),
             'corners_away' => $this->getIntOrZero($match, 'live_corner_away'),
             'match_status' => (string) ($match['match_status'] ?? ''),
-            'has_data' => $minute > 0,
+            'has_data' => $hasData,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $match
+     */
+    private function hasRequiredAlgorithmXStatistics(array $match): bool
+    {
+        $requiredKeys = [
+            'live_ht_hscore',
+            'live_ht_ascore',
+            'live_danger_att_home',
+            'live_danger_att_away',
+            'live_shots_on_target_home',
+            'live_shots_on_target_away',
+            'live_shots_off_target_home',
+            'live_shots_off_target_away',
+            'live_corner_home',
+            'live_corner_away',
+            'match_status',
+        ];
+
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $match)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

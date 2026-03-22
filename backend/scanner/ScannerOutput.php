@@ -175,9 +175,9 @@ class ScannerOutput
         }
 
         echo 'Algorithm 1 debug:' . PHP_EOL;
-        echo '  accepted: ' . (int) ($summary['accepted'] ?? 0) . PHP_EOL;
+        echo '  accepted: ' . $summary['accepted'] . PHP_EOL;
 
-        $rejected = is_array($summary['rejected'] ?? null) ? $summary['rejected'] : [];
+        $rejected = $summary['rejected'];
         if ($rejected === []) {
             echo '  rejected: 0' . PHP_EOL;
             echo PHP_EOL;

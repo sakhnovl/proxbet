@@ -127,7 +127,7 @@ final class GeminiMatchAnalyzer
 
         $analyzer = new AlgorithmOneGeminiAnalyzer($this->apiKey, $this->model, $this->timeoutSeconds);
         $result = $analyzer->analyze($explainContext, AlgorithmOneGeminiAnalyzer::MODE_EXPLAIN);
-        $analysis = is_array($result['analysis'] ?? null) ? $result['analysis'] : [];
+        $analysis = $result['analysis'];
         $text = trim((string) ($analysis['text'] ?? ''));
 
         if ($text === '') {
@@ -136,9 +136,9 @@ final class GeminiMatchAnalyzer
         }
 
         return [
-            'provider' => (string) ($result['provider'] ?? 'gemini'),
-            'model' => (string) ($result['model'] ?? $this->model),
-            'prompt' => (string) ($result['prompt'] ?? ''),
+            'provider' => $result['provider'],
+            'model' => $result['model'],
+            'prompt' => $result['prompt'],
             'response' => $text,
         ];
     }

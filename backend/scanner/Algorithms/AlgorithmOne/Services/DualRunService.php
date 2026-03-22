@@ -116,8 +116,8 @@ final class DualRunService
             ],
             'debug' => [
                 'gating_passed' => $filterResult['bet'],
-                'gating_reason' => $filterResult['bet'] ? '' : ($filterResult['reason'] ?? ''),
-                'decision_reason' => $filterResult['reason'] ?? '',
+                'gating_reason' => $filterResult['bet'] ? '' : $filterResult['reason'],
+                'decision_reason' => $filterResult['reason'],
                 'probability' => $legacyResult['probability'],
                 'red_flag' => null,
             ],

@@ -56,7 +56,7 @@ final class AlgorithmXChannelVerdictGenerator
                     $this->repository->markGeminiModelSuccess($modelId);
                     $this->repository->markGeminiKeySuccess($keyId);
 
-                    return trim((string) ($result['response'] ?? ''));
+                    return trim($result['response']);
                 } catch (\Throwable $e) {
                     $message = $e->getMessage();
                     $keyErrors[] = sprintf('[model:%s] %s', $modelName, $message);

@@ -42,8 +42,8 @@ final class AlgorithmTwo implements AlgorithmInterface
         $decision = $this->filter->shouldBetAlgorithmTwo($liveData, $algorithmData);
 
         return [
-            'bet' => $decision['bet'] ?? false,
-            'reason' => $decision['reason'] ?? 'unknown',
+            'bet' => $decision['bet'],
+            'reason' => $decision['reason'],
             'confidence' => 0.0, // Algorithm 2 doesn't use probability
         ];
     }

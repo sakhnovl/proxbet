@@ -37,9 +37,7 @@ final class Container
     /**
      * Get a service instance.
      *
-     * @template T
      * @param string $id Service identifier
-     * @return T
      * @throws ConfigurationException
      */
     public function get(string $id): mixed

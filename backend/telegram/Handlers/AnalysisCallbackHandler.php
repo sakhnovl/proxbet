@@ -99,7 +99,7 @@ class AnalysisCallbackHandler
         }
 
         $context['algorithm_id'] = $algorithmId;
-        if (!isset($context['algorithm_name']) || trim((string) ($context['algorithm_name'] ?? '')) === '') {
+        if (!isset($context['algorithm_name']) || trim((string) $context['algorithm_name']) === '') {
             $context['algorithm_name'] = 'Алгоритм ' . $algorithmId;
         }
 

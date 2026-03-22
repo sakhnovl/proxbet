@@ -49,7 +49,6 @@ final class BanService
             );
             
             $bans = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $bans = is_array($bans) ? $bans : [];
 
             // Cache the result
             if ($this->cache !== null) {
@@ -59,7 +58,7 @@ final class BanService
             return $bans;
         } catch (\PDOException $e) {
             Logger::error('Failed to fetch active bans', ['error' => $e->getMessage()]);
-            throw new DatabaseException('Failed to fetch active bans: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Failed to fetch active bans: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 
@@ -104,7 +103,7 @@ final class BanService
             return (int) $this->pdo->lastInsertId();
         } catch (\PDOException $e) {
             Logger::error('Failed to add ban', ['error' => $e->getMessage()]);
-            throw new DatabaseException('Failed to add ban: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Failed to add ban: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 }

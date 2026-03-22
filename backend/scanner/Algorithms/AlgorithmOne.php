@@ -137,19 +137,19 @@ final class AlgorithmOne implements AlgorithmInterface
 
         return [
             'bet' => $result['decision']['bet'],
-            'reason' => $result['decision']['reason'] ?? 'unknown',
+            'reason' => $result['decision']['reason'],
             'confidence' => $result['probability'],
             'debug' => [
                 'algorithm_version' => Config::VERSION_V2,
-                'gating_passed' => $result['debug']['gating_passed'] ?? false,
-                'gating_reason' => $result['debug']['gating_reason'] ?? '',
-                'decision_reason' => $result['debug']['decision_reason'] ?? ($result['decision']['reason'] ?? 'unknown'),
-                'probability' => $result['debug']['probability'] ?? $result['probability'],
+                'gating_passed' => $result['debug']['gating_passed'],
+                'gating_reason' => $result['debug']['gating_reason'],
+                'decision_reason' => $result['debug']['decision_reason'],
+                'probability' => $result['debug']['probability'],
                 'components' => $result['components'],
                 'red_flag' => $result['debug']['red_flag'] ?? null,
-                'red_flags' => $result['debug']['red_flags'] ?? [],
-                'penalties' => $result['debug']['penalties'] ?? [],
-                'gating_context' => $result['debug']['gating_context'] ?? [],
+                'red_flags' => $result['debug']['red_flags'],
+                'penalties' => $result['debug']['penalties'],
+                'gating_context' => $result['debug']['gating_context'],
             ],
         ];
     }
@@ -170,23 +170,43 @@ final class AlgorithmOne implements AlgorithmInterface
         
         // Use the configured version as primary
         $version = Config::getAlgorithmVersion();
-        $primary = $version === Config::VERSION_V2 ? $dualResult['v2'] : $dualResult['legacy'];
+        if ($version === Config::VERSION_V2) {
+            /** @var array<string,mixed> $v2Primary */
+            $v2Primary = $dualResult['v2'];
+            $primary = $v2Primary;
+            /** @var array<string,mixed> $primaryDebug */
+            $primaryDebug = is_array($v2Primary['debug'] ?? null) ? $v2Primary['debug'] : [];
+        } else {
+            /** @var array<string,mixed> $primary */
+            $primary = $dualResult['legacy'];
+            /** @var array<string,mixed> $primaryDebug */
+            $primaryDebug = [
+                'gating_passed' => $dualResult['legacy']['decision']['bet'],
+                'gating_reason' => '',
+                'decision_reason' => $dualResult['legacy']['decision']['reason'],
+                'probability' => $dualResult['legacy']['probability'],
+                'red_flag' => null,
+                'red_flags' => [],
+                'penalties' => [],
+                'gating_context' => [],
+            ];
+        }
         
         return [
             'bet' => $primary['decision']['bet'],
-            'reason' => $primary['decision']['reason'] ?? 'unknown',
+            'reason' => $primary['decision']['reason'],
             'confidence' => $primary['probability'],
             'debug' => [
                 'algorithm_version' => $version,
-                'gating_passed' => $primary['debug']['gating_passed'] ?? $primary['decision']['bet'],
-                'gating_reason' => $primary['debug']['gating_reason'] ?? '',
-                'decision_reason' => $primary['debug']['decision_reason'] ?? ($primary['decision']['reason'] ?? 'unknown'),
-                'probability' => $primary['debug']['probability'] ?? $primary['probability'],
-                'components' => $primary['components'] ?? [],
-                'red_flag' => $primary['debug']['red_flag'] ?? null,
-                'red_flags' => $primary['debug']['red_flags'] ?? [],
-                'penalties' => $primary['debug']['penalties'] ?? [],
-                'gating_context' => $primary['debug']['gating_context'] ?? [],
+                'gating_passed' => $primaryDebug['gating_passed'],
+                'gating_reason' => $primaryDebug['gating_reason'],
+                'decision_reason' => $primaryDebug['decision_reason'],
+                'probability' => $primaryDebug['probability'],
+                'components' => $primary['components'],
+                'red_flag' => $primaryDebug['red_flag'],
+                'red_flags' => $primaryDebug['red_flags'],
+                'penalties' => $primaryDebug['penalties'],
+                'gating_context' => $primaryDebug['gating_context'],
             ],
             // Include dual-run comparison data for analysis
             'dual_run' => [

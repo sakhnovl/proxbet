@@ -25,7 +25,7 @@ class GracefulDegradation
     /**
      * Execute with fallback to cached data
      */
-    public function executeWithCacheFallback(string $key, callable $primary, int $cacheTtl = 3600)
+    public function executeWithCacheFallback(string $key, callable $primary, int $cacheTtl = 3600): mixed
     {
         try {
             $result = $primary();
@@ -52,7 +52,7 @@ class GracefulDegradation
     /**
      * Execute with timeout and fallback
      */
-    public function executeWithTimeout(callable $callback, int $timeoutSeconds, $fallbackValue = null)
+    public function executeWithTimeout(callable $callback, int $timeoutSeconds, mixed $fallbackValue = null): mixed
     {
         $startTime = microtime(true);
 

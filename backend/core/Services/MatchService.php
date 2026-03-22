@@ -35,10 +35,10 @@ final class MatchService
             );
             
             $matches = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            return is_array($matches) ? $matches : [];
+            return $matches;
         } catch (\PDOException $e) {
             Logger::error('Failed to fetch active matches', ['error' => $e->getMessage()]);
-            throw new DatabaseException('Failed to fetch active matches: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Failed to fetch active matches: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 
@@ -59,7 +59,7 @@ final class MatchService
             return is_array($match) ? $match : null;
         } catch (\PDOException $e) {
             Logger::error('Failed to fetch match by ID', ['id' => $id, 'error' => $e->getMessage()]);
-            throw new DatabaseException('Failed to fetch match: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Failed to fetch match: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 
@@ -88,7 +88,7 @@ final class MatchService
                 'match_id' => $matchId,
                 'error' => $e->getMessage()
             ]);
-            throw new DatabaseException('Failed to update algorithm data: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Failed to update algorithm data: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 }

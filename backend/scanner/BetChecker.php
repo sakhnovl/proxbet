@@ -184,7 +184,7 @@ final class BetChecker
      */
     private function parseMatchTime(string $time): int
     {
-        if ($time === '' || $time === null) {
+        if ($time === '') {
             return 0;
         }
 

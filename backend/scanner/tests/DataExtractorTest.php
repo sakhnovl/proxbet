@@ -346,6 +346,41 @@ final class DataExtractorTest extends TestCase
         $this->assertEquals('Chelsea', $result['away']);
     }
 
+    public function testExtractAlgorithmXDataMarksMissingStatsAsIncomplete(): void
+    {
+        $result = $this->extractor->extractAlgorithmXData([
+            'time' => '20:00',
+            'match_status' => 'In Play',
+        ]);
+
+        $this->assertSame(20, $result['minute']);
+        $this->assertFalse($result['has_data']);
+        $this->assertSame(0, $result['shots_home']);
+        $this->assertSame(0, $result['shots_away']);
+    }
+
+    public function testExtractAlgorithmXDataAcceptsZeroValuedStatsWhenFieldsExist(): void
+    {
+        $result = $this->extractor->extractAlgorithmXData([
+            'time' => '12:00',
+            'live_ht_hscore' => 0,
+            'live_ht_ascore' => 0,
+            'live_danger_att_home' => 0,
+            'live_danger_att_away' => 0,
+            'live_shots_on_target_home' => 0,
+            'live_shots_on_target_away' => 0,
+            'live_shots_off_target_home' => 0,
+            'live_shots_off_target_away' => 0,
+            'live_corner_home' => 0,
+            'live_corner_away' => 0,
+            'match_status' => 'In Play',
+        ]);
+
+        $this->assertTrue($result['has_data']);
+        $this->assertSame(0, $result['shots_home']);
+        $this->assertSame(0, $result['shots_away']);
+    }
+
     public function testUpdateAlgorithmData(): void
     {
         $this->pdo->exec('

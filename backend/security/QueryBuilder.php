@@ -92,7 +92,7 @@ class QueryBuilder
     /**
      * Add WHERE condition
      */
-    public function where(string $column, string $operator, $value = null): self
+    public function where(string $column, string $operator, mixed $value = null): self
     {
         // If only 2 params, assume operator is '='
         if ($value === null) {
@@ -218,11 +218,8 @@ class QueryBuilder
     {
         $sql = $this->buildSelectQuery();
         
-        return $this->queryGuard->executeQuery(
-            $sql,
-            $this->params,
-            'SELECT'
-        );
+        $stmt = $this->queryGuard->executeQuery($sql, $this->params);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
     
     /**
@@ -245,7 +242,7 @@ class QueryBuilder
         $this->select = ['COUNT(*) as count'];
         
         $sql = $this->buildSelectQuery(false); // Don't add LIMIT for COUNT
-        $result = $this->queryGuard->executeQuery($sql, $this->params, 'SELECT');
+        $result = $this->queryGuard->executeQuery($sql, $this->params)->fetchAll(\PDO::FETCH_ASSOC);
         
         $this->select = $originalSelect;
         
@@ -275,7 +272,7 @@ class QueryBuilder
             implode(', ', $placeholders)
         );
         
-        $this->queryGuard->executeQuery($sql, $data, 'INSERT');
+        $this->queryGuard->executeQuery($sql, $data);
         
         return (int)$this->pdo->lastInsertId();
     }
@@ -303,11 +300,10 @@ class QueryBuilder
             $placeholders
         );
         
-        $stmt = $this->pdo->prepare($sql);
         $count = 0;
         
         foreach ($rows as $row) {
-            $this->queryGuard->executeQuery($sql, $row, 'INSERT', $stmt);
+            $this->queryGuard->executeQuery($sql, $row);
             $count++;
         }
         

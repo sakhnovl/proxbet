@@ -511,6 +511,7 @@ final class MatchFilter
                 : 'both_rules_matched_selected_team_2';
         }
 
+        $triggeredRule = (string) $triggeredRule;
         $triggeredRuleLabel = match ($triggeredRule) {
             'team_1_attack_vs_team_2_missed' => 'атака хозяев и пропускаемость гостей выше порога',
             'team_2_attack_vs_team_1_missed' => 'атака гостей и пропускаемость хозяев выше порога',

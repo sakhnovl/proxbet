@@ -337,7 +337,7 @@ final class Update
     private static function parseMinute(string $time): int
     {
         $parts = explode(':', $time);
-        if (count($parts) < 1 || !is_numeric($parts[0])) {
+        if (!is_numeric($parts[0])) {
             return 0;
         }
 

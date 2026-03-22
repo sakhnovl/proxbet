@@ -65,6 +65,8 @@ class DatabaseConnectionManager
             throw new DatabaseException(
                 'Database connection failed after retries: ' . $e->getMessage(),
                 0,
+                false,
+                [],
                 $e
             );
         }
@@ -122,7 +124,7 @@ class DatabaseConnectionManager
     /**
      * Execute query with automatic reconnection
      */
-    public function executeWithReconnect(callable $callback)
+    public function executeWithReconnect(callable $callback): mixed
     {
         try {
             return $callback($this->getConnection());
@@ -137,7 +139,7 @@ class DatabaseConnectionManager
                 return $callback($this->getConnection());
             }
 
-            throw new DatabaseException('Database query failed: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('Database query failed: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 

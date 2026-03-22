@@ -101,7 +101,8 @@ final class CacheManager
         }
 
         try {
-            return $this->redis->del($key) > 0;
+            $deleted = $this->redis->del($key);
+            return is_int($deleted) && $deleted > 0;
         } catch (\Throwable $e) {
             error_log('CacheManager: Delete failed - ' . $e->getMessage());
             return false;
@@ -289,7 +290,7 @@ final class CacheManager
      *
      * @param string[] $tags
      */
-    public function setWithTags(string $key, $value, array $tags, int $ttl = self::DEFAULT_TTL): bool
+    public function setWithTags(string $key, mixed $value, array $tags, int $ttl = self::DEFAULT_TTL): bool
     {
         if (!$this->enabled || $this->redis === null) {
             return false;

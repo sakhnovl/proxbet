@@ -52,7 +52,7 @@ final class AlgorithmOneChannelVerdictGenerator
                 try {
                     $analyzer = new GeminiAnalyzer($apiKey, $modelName, $this->timeoutSeconds);
                     $result = $analyzer->analyze($context, GeminiAnalyzer::MODE_CHANNEL_SHORT);
-                    $analysis = is_array($result['analysis'] ?? null) ? $result['analysis'] : [];
+                    $analysis = $result['analysis'];
                     $text = trim((string) ($analysis['text'] ?? ''));
 
                     if ($text === '') {

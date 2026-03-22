@@ -5,5 +5,7 @@ parameters:
     excludePaths:
         - backend/bootstrap/autoload.php
         - backend/tests
-    checkMissingIterableValueType: false
-    checkGenericClassInNonGenericObjectType: false
+    ignoreErrors:
+        - identifier: missingType.iterableValue
+        -
+            message: '#Match arm is unreachable because previous comparison is always true#'

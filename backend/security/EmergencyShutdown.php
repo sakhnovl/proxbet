@@ -84,7 +84,7 @@ class EmergencyShutdown
         $lifted = true;
 
         if (file_exists($this->shutdownFile)) {
-            $lifted = unlink($this->shutdownFile) && $lifted;
+            $lifted = unlink($this->shutdownFile);
         }
 
         if (file_exists($this->reasonFile)) {

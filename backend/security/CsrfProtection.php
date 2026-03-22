@@ -31,7 +31,7 @@ final class CsrfProtection
         }
 
         // Check header first
-        $headerToken = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+        $headerToken = $_SERVER[self::headerServerKey()] ?? '';
         if ($headerToken !== '' && hash_equals($expectedToken, $headerToken)) {
             return true;
         }
@@ -52,5 +52,10 @@ final class CsrfProtection
     public static function validateFromRequest(string $storedToken): bool
     {
         return self::validateToken($storedToken);
+    }
+
+    private static function headerServerKey(): string
+    {
+        return 'HTTP_' . strtoupper(str_replace('-', '_', self::HEADER_NAME));
     }
 }

@@ -93,7 +93,7 @@ final class PrometheusMetrics
         $this->histograms[$name] = [
             'sum' => 0.0,
             'count' => 0,
-            'buckets' => [0.005 => 0, 0.01 => 0, 0.025 => 0, 0.05 => 0, 0.1 => 0, 0.25 => 0, 0.5 => 0, 1.0 => 0, 2.5 => 0, 5.0 => 0, 10.0 => 0],
+            'buckets' => ['0.005' => 0, '0.010' => 0, '0.025' => 0, '0.050' => 0, '0.100' => 0, '0.250' => 0, '0.500' => 0, '1.000' => 0, '2.500' => 0, '5.000' => 0, '10.000' => 0],
         ];
         $this->help[$name] = $help;
         $this->type[$name] = 'histogram';
@@ -123,7 +123,7 @@ final class PrometheusMetrics
         $this->histograms[$name]['count']++;
 
         foreach ($this->histograms[$name]['buckets'] as $bucket => $count) {
-            if ($value <= $bucket) {
+            if ($value <= (float) $bucket) {
                 $this->histograms[$name]['buckets'][$bucket]++;
             }
         }

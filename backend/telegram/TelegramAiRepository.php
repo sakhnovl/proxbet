@@ -337,7 +337,7 @@ final class TelegramAiRepository
         );
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        return $rows;
     }
 
     /**
@@ -351,7 +351,7 @@ final class TelegramAiRepository
         );
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        return $rows;
     }
 
     public function addGeminiModel(string $modelName): void

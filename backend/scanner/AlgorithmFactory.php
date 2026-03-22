@@ -40,9 +40,10 @@ use Proxbet\Scanner\Algorithms\AlgorithmOne\Config as AlgorithmOneConfig;
 final class AlgorithmFactory
 {
     public function __construct(
-        private ProbabilityCalculator $calculator,
+        ProbabilityCalculator $calculator,
         private MatchFilter $filter
     ) {
+        unset($calculator);
     }
 
     /**

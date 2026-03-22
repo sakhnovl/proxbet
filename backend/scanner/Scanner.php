@@ -14,10 +14,6 @@ use Proxbet\Scanner\Algorithms\AlgorithmX\AlgorithmX;
  */
 final class Scanner
 {
-    private const ALGORITHM_ONE_ID = 1;
-    private const ALGORITHM_TWO_ID = 2;
-    private const ALGORITHM_THREE_ID = 3;
-    private const ALGORITHM_X_ID = 4;
     /** @var array<string,int> */
     private array $algorithmOneRejectSummary = [];
     private int $algorithmOneAcceptedSignals = 0;
@@ -42,13 +38,14 @@ final class Scanner
 
     public function __construct(
         private DataExtractor $extractor,
-        private ProbabilityCalculator $calculator,
+        ProbabilityCalculator $calculator,
         private MatchFilter $filter,
         private ResultFormatter $formatter,
         private AlgorithmOne $algorithmOne,
         private AlgorithmX $algorithmX,
         private ?HtMetricsCalculator $htCalculator = null,
     ) {
+        unset($calculator);
         $this->htCalculator = $htCalculator ?? new HtMetricsCalculator();
     }
 
@@ -400,6 +397,11 @@ final class Scanner
      */
     private function collectAlgorithmXMonitoring(array $algorithmXResult, array $algorithmXDecision): void
     {
+        $debug = is_array($algorithmXResult['debug'] ?? null) ? $algorithmXResult['debug'] : [];
+        if (($debug['validation_failed'] ?? false) === true) {
+            return;
+        }
+
         $probability = (float) ($algorithmXResult['confidence'] ?? 0.0);
         $this->algorithmXMonitoring['analyzed']++;
         $this->algorithmXMonitoring['probability_sum'] += $probability;

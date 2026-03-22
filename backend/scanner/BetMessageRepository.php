@@ -100,7 +100,7 @@ final class BetMessageRepository
             );
 
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            return is_array($rows) ? $rows : [];
+            return $rows;
         } catch (\Throwable $e) {
             Logger::error('Failed to get pending bets', ['error' => $e->getMessage()]);
             return [];
@@ -327,7 +327,7 @@ final class BetMessageRepository
             $stmt->execute();
 
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            return is_array($rows) ? $rows : [];
+            return $rows;
         } catch (\Throwable $e) {
             Logger::error('Failed to get recent bets', ['error' => $e->getMessage()]);
             return [];

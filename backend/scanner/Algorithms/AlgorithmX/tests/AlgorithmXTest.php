@@ -455,6 +455,32 @@ final class AlgorithmXTest extends TestCase
         $this->assertGreaterThan(0.50, $result['confidence']);
     }
 
+    public function testAnalyzeRejectsPreExtractedLiveDataWhenRequiredFieldsAreMissing(): void
+    {
+        $liveData = [
+            'minute' => 18,
+            'score_home' => 0,
+            'score_away' => 0,
+            'dangerous_attacks_home' => 0,
+            'dangerous_attacks_away' => 0,
+            'shots_home' => 0,
+            'shots_away' => 0,
+            'shots_on_target_home' => 0,
+            'shots_on_target_away' => 0,
+            'corners_home' => 0,
+            'corners_away' => 0,
+            'match_status' => 'In Play',
+            'has_data' => false,
+        ];
+
+        $result = $this->algorithm->analyze(['live_data' => $liveData]);
+
+        $this->assertFalse($result['bet']);
+        $this->assertSame(0.0, $result['confidence']);
+        $this->assertTrue($result['debug']['validation_failed']);
+        $this->assertSame('No live data available', $result['reason']);
+    }
+
     public function testAnalyzeFullFlowWithBetFalse(): void
     {
         // Arrange: Conditions that should result in bet=false

@@ -93,6 +93,6 @@ final class LiveService
     {
         $stmt = $pdo->query('SELECT `evid`,`home`,`away` FROM `matches` WHERE `home` IS NOT NULL AND `away` IS NOT NULL');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        return $rows;
     }
 }

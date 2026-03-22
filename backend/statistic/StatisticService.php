@@ -11,9 +11,6 @@ use Proxbet\Statistic\Interfaces\StatisticServiceInterface;
 final class StatisticService implements StatisticServiceInterface
 {
     private const MAX_ERROR_LENGTH = 2000;
-    private const BATCH_SIZE_MIN = 1;
-    private const BATCH_SIZE_MAX = 1000;
-
     public function __construct(
         private Config $config,
         private EventsstatClient $client,
@@ -56,8 +53,7 @@ final class StatisticService implements StatisticServiceInterface
             $sgi = (string) $it['sgi'];
             $home = (string) $it['home'];
             $away = (string) $it['away'];
-            $sgiJsonDb = array_key_exists('sgi_json', $it) ? $it['sgi_json'] : null;
-            $sgiJsonDb = is_string($sgiJsonDb) ? $sgiJsonDb : '';
+            $sgiJsonDb = is_string($it['sgi_json']) ? $it['sgi_json'] : '';
 
             $source = 'db';
             $decoded = $this->decodeSgiJson($sgiJsonDb, $matchId, $sgi);
@@ -120,10 +116,10 @@ final class StatisticService implements StatisticServiceInterface
                     $this->repo->saveSgiJson($matchId, $raw);
                 }
 
-                $htDetails = ($decoded === [] || $home === '' || $away === '')
+                $htDetails = ($home === '' || $away === '')
                     ? ['metrics' => $this->getEmptyHtMetrics(), 'debug' => []]
                     : $this->htCalculator->calculate($decoded, $home, $away);
-                $tableDetails = ($decoded === [] || $home === '' || $away === '')
+                $tableDetails = ($home === '' || $away === '')
                     ? ['metrics' => $this->getEmptyTableMetrics(), 'debug' => []]
                     : $this->tableCalculator->calculate($decoded, $home, $away);
 
@@ -288,7 +284,7 @@ final class StatisticService implements StatisticServiceInterface
             $stmt->execute(array_merge([$dbName, 'matches'], array_keys($columns)));
 
             $existing = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
-            $existingSet = array_flip(array_map('strval', is_array($existing) ? $existing : []));
+            $existingSet = array_flip(array_map('strval', $existing));
 
             $missing = [];
             foreach ($columns as $name => $typeSql) {

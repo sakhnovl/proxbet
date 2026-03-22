@@ -12,8 +12,6 @@ class ApiVersionValidator
 {
     private const SUPPORTED_VERSIONS = ['v1'];
     private const DEFAULT_VERSION = 'v1';
-    private const DEPRECATED_VERSIONS = [];
-
     /**
      * Get API version from request
      * Checks: 1) X-API-Version header, 2) Accept header, 3) URL path
@@ -72,7 +70,7 @@ class ApiVersionValidator
      */
     public function isVersionDeprecated(string $version): bool
     {
-        return in_array($version, self::DEPRECATED_VERSIONS, true);
+        return false;
     }
 
     /**

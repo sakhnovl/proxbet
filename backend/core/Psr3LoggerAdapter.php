@@ -20,47 +20,47 @@ class Psr3LoggerAdapter implements LoggerInterface
         $this->logger = $logger;
     }
 
-    public function emergency($message, array $context = []): void
+    public function emergency(string|\Stringable $message, array $context = []): void
     {
         $this->logger->log('emergency', (string)$message, $context);
     }
 
-    public function alert($message, array $context = []): void
+    public function alert(string|\Stringable $message, array $context = []): void
     {
         $this->logger->log('alert', (string)$message, $context);
     }
 
-    public function critical($message, array $context = []): void
+    public function critical(string|\Stringable $message, array $context = []): void
     {
         $this->logger->critical((string)$message, $context);
     }
 
-    public function error($message, array $context = []): void
+    public function error(string|\Stringable $message, array $context = []): void
     {
         $this->logger->error((string)$message, $context);
     }
 
-    public function warning($message, array $context = []): void
+    public function warning(string|\Stringable $message, array $context = []): void
     {
         $this->logger->warning((string)$message, $context);
     }
 
-    public function notice($message, array $context = []): void
+    public function notice(string|\Stringable $message, array $context = []): void
     {
         $this->logger->log('notice', (string)$message, $context);
     }
 
-    public function info($message, array $context = []): void
+    public function info(string|\Stringable $message, array $context = []): void
     {
         $this->logger->info((string)$message, $context);
     }
 
-    public function debug($message, array $context = []): void
+    public function debug(string|\Stringable $message, array $context = []): void
     {
         $this->logger->debug((string)$message, $context);
     }
 
-    public function log($level, $message, array $context = []): void
+    public function log(string $level, string|\Stringable $message, array $context = []): void
     {
         $this->logger->log((string)$level, (string)$message, $context);
     }

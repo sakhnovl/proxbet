@@ -18,7 +18,7 @@ final class PdoQueryHelper
         $stmt->execute();
 
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+        return $rows;
     }
 
     /**

@@ -94,10 +94,6 @@ while (!GracefulShutdown::isShutdownRequested()) {
     } catch (Throwable $e) {
         Logger::error('Telegram polling error', ['error' => $e->getMessage()]);
         
-        if (GracefulShutdown::isShutdownRequested()) {
-            break;
-        }
-        
         // Small backoff to avoid tight loop on errors
         usleep(500 * 1000);
     }

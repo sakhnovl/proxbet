@@ -59,11 +59,12 @@ final class DatabaseProfiler
 
         $startTime = microtime(true);
         $startMemory = memory_get_usage();
+        $success = false;
+        $error = null;
 
         try {
             $result = $callback();
             $success = true;
-            $error = null;
         } catch (\Throwable $e) {
             $success = false;
             $error = $e->getMessage();
@@ -79,7 +80,7 @@ final class DatabaseProfiler
                 'sql' => $sql,
                 'duration' => $duration,
                 'memory' => $memoryUsed,
-                'success' => $success ?? false,
+                'success' => $success,
                 'error' => $error ?? null,
                 'timestamp' => $startTime,
                 'is_slow' => $duration > self::$slowQueryThreshold,
@@ -106,9 +107,9 @@ final class DatabaseProfiler
             $stmt = $pdo->query($explainSql);
             $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            return is_array($result) ? $result : [];
+            return $result;
         } catch (\Throwable $e) {
-            return ['error' => $e->getMessage()];
+            return [];
         }
     }
 

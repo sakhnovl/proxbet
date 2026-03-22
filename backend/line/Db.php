@@ -56,7 +56,7 @@ final class Db
 
             return $pdo;
         } catch (PDOException $e) {
-            throw new DatabaseException('DB connect failed: ' . $e->getMessage(), 0, $e);
+            throw new DatabaseException('DB connect failed: ' . $e->getMessage(), 0, false, [], $e);
         }
     }
 
@@ -125,7 +125,7 @@ final class Db
         try {
             $stmt = $pdo->query('SELECT `id`,`country`,`liga`,`home`,`away`,`is_active`,`created_at`,`updated_at` FROM `bans` WHERE `is_active`=1 ORDER BY `id` ASC');
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $bans = is_array($rows) ? $rows : [];
+            $bans = $rows;
 
             // Cache the result
             try {
@@ -166,7 +166,7 @@ final class Db
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return ['rows' => (is_array($rows) ? $rows : []), 'total' => $total];
+        return ['rows' => $rows, 'total' => $total];
     }
 
     /** @return array<string,mixed>|null */

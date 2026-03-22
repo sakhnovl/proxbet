@@ -415,9 +415,9 @@ final class HistoricalReplayService
             $result = $this->v2Calculator->calculate($formData, $h2hData, $liveData, (int) $liveData['minute']);
 
             return [
-                'bet' => (bool) (($result['decision']['bet'] ?? false)),
-                'reason' => (string) (($result['decision']['reason'] ?? 'unknown')),
-                'probability' => (float) ($result['probability'] ?? 0.0),
+                'bet' => $result['decision']['bet'],
+                'reason' => $result['decision']['reason'],
+                'probability' => $result['probability'],
                 'minute' => (int) $liveData['minute'],
             ];
         });
@@ -749,7 +749,7 @@ final class HistoricalReplayService
     private function parseMinute(string $time): int
     {
         $parts = explode(':', $time);
-        if ($parts === [] || !is_numeric($parts[0])) {
+        if (!is_numeric($parts[0])) {
             return 0;
         }
 

@@ -69,7 +69,7 @@ final class StatsHandler
 
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
         return [
-            'rows' => is_array($rows) ? $rows : [],
+            'rows' => $rows,
             'total' => $total,
         ];
     }

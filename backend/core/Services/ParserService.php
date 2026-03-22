@@ -127,7 +127,7 @@ class ParserService
                     'home' => $banRow['home'] ?? null,
                     'away' => $banRow['away'] ?? null,
                 ],
-                'matched' => $resDbg['matched'] ?? false,
+                'matched' => $resDbg['matched'],
                 'matched_fields' => $resDbg['fields'] ?? [],
             ]);
         }

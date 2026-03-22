@@ -334,7 +334,7 @@ final class DataExtractor
     private function parseMinute(string $time): int
     {
         $parts = explode(':', $time);
-        if (count($parts) >= 1 && is_numeric($parts[0])) {
+        if (is_numeric($parts[0])) {
             return max(0, (int) $parts[0]);
         }
         return 0;

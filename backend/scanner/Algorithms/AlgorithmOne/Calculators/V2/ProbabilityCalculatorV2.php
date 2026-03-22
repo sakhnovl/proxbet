@@ -319,6 +319,7 @@ final class ProbabilityCalculatorV2
      */
     private function buildThresholdEvaluation(float $probability, float $activeThreshold): array
     {
+        /** @var array<string, bool> $candidates */
         $candidates = [];
 
         foreach (Config::getV2ThresholdCandidates() as $threshold) {

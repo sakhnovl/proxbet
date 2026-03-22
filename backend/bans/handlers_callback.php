@@ -155,8 +155,8 @@ function onList(string $cbId, int $chatId, int $messageId, int $offsetList, arra
 
     $pageSize = 10;
     $page = Db::listBans($db, $pageSize, $offsetList);
-    $rows = $page['rows'] ?? [];
-    $total = (int) ($page['total'] ?? 0);
+    $rows = $page['rows'];
+    $total = $page['total'];
 
     $out = "📃 Bans\n\n";
     foreach ($rows as $r) {

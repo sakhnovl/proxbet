@@ -88,7 +88,7 @@ function displayStatistics(array $stats, array $recentBets): void
     echo PHP_EOL;
 
     // Win rate
-    $completed = $stats['won'] + $stats['lost'];
+    $completed = (int) ($stats['won'] ?? 0) + (int) ($stats['lost'] ?? 0);
     if ($completed > 0) {
         echo "📈 ПРОЦЕНТ УСПЕШНОСТИ" . PHP_EOL;
         echo str_repeat('-', 80) . PHP_EOL;

@@ -242,7 +242,7 @@ function buildAlgorithmOneContextData(
     $reason = trim((string) ($payload['decision_reason'] ?? $decision['reason']));
     $bet = isset($context['bet_message_id']) && $context['bet_message_id'] !== null
         ? true
-        : (bool) ($decision['bet'] ?? false);
+        : $decision['bet'];
     $gatingPassed = array_key_exists('gating_passed', $payload)
         ? (bool) $payload['gating_passed']
         : $bet;

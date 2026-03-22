@@ -233,7 +233,7 @@ function tryHandleCommand(int $fromId, int $chatId, string $textTrim, array $ctx
 
     if (str_starts_with($textTrim, '/bans_list')) {
         $page = Db::listBans($db, 10, 0);
-        $rows = $page['rows'] ?? [];
+        $rows = $page['rows'];
         $out = "Bans (top 10)\n\n";
         foreach ($rows as $r) {
             $out .= formatBanRow($r) . "\n";

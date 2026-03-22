@@ -12,6 +12,7 @@ final class WeightedFormServiceTest extends TestCase
 {
     private function createMockCalculator(array $returnData): HtMetricsCalculator
     {
+        // @phpstan-ignore-next-line PHPUnit mock type is resolved at runtime
         $mock = $this->createMock(HtMetricsCalculator::class);
         $mock->method('calculate')->willReturn($returnData);
         return $mock;
