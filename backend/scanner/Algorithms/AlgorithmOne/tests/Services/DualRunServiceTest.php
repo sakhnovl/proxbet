@@ -15,7 +15,6 @@ final class DualRunServiceTest extends TestCase
 {
     private function createMockLegacyCalculator(float $probability): ProbabilityCalculator
     {
-        // @phpstan-ignore-next-line PHPUnit mock type is resolved at runtime
         $mock = $this->createMock(ProbabilityCalculator::class);
         $mock->method('calculate')->willReturn($probability);
         return $mock;
@@ -23,7 +22,6 @@ final class DualRunServiceTest extends TestCase
 
     private function createMockV2Calculator(array $result): ProbabilityCalculatorV2
     {
-        // @phpstan-ignore-next-line PHPUnit mock type is resolved at runtime
         $mock = $this->createMock(ProbabilityCalculatorV2::class);
         $mock->method('calculate')->willReturn($result);
         return $mock;
@@ -31,7 +29,6 @@ final class DualRunServiceTest extends TestCase
 
     private function createMockLegacyFilter(bool $shouldBet, ?string $reason = null): LegacyFilter
     {
-        // @phpstan-ignore-next-line PHPUnit mock type is resolved at runtime
         $mock = $this->createMock(LegacyFilter::class);
         $mock->method('shouldBet')->willReturn([
             'bet' => $shouldBet,

@@ -6,6 +6,5 @@ parameters:
         - backend/bootstrap/autoload.php
         - backend/tests
     ignoreErrors:
-        - identifier: missingType.iterableValue
         -
             message: '#Match arm is unreachable because previous comparison is always true#'
